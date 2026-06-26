@@ -1,58 +1,103 @@
 # Simple SF Energy Sharing ABM
 
-This is a standalone copy of the simple ABM. It contains only the model script,
-a compact prepared input file, and generated reports. The large raw SF source
-CSVs are not included.
+This repository contains only the simple ABM, a compact prepared input file, and
+generated reports. The large raw SF source CSV files are not included.
 
-Run:
+Run both scenarios:
 
 ```bash
 python simple_abm.py
 ```
 
+Run one scenario:
+
+```bash
+python simple_abm.py --generosity 0
+python simple_abm.py --generosity 1
+```
+
+## Simulation Time
+
+The simulation covers exactly 30 days:
+
+- Start: `2025-01-01 00:00`
+- End: `2025-01-30 23:00`
+- Time step: hourly
+- Total time steps: `720`
+- No-sun disturbance day: `2025-01-15`
+
 ## Agent Definition
+
 Each grid cell is one building agent:
 
-`A_i(t) = {health_i(t), generation_i(t), demand_i(t), storage_i(t), norm_i}`
+`A_i(t) = {health_i(t), generation_i(t), demand_i(t), storage_i(t), generosity}`
 
-- `health_i(t)`: fraction of hourly demand served after self-generation, storage, and neighbor sharing.
+- `health_i(t)`: whether the building has enough net energy at time `t`.
 - `generation_i(t)`: solar generation for the hour.
-- `demand_i(t)`: hourly load sampled from the SF building energy profiles.
+- `demand_i(t)`: hourly load sampled from the prepared SF building energy profiles.
 - `storage_i(t)`: unused surplus carried to the next hour.
-- `norm_i`: generosity parameter sampled once from `Uniform(0, 1)`.
+- `generosity`: energy sharing parameter. This repo runs two versions: `0` and `1`.
 
 ## Environment
-- Location: San Francisco bounding box `{'west': -122.515, 'east': -122.355, 'south': 37.705, 'north': 37.812}`.
-- Grid: `36 x 36` cells, one agent per cell.
+
+- Location: San Francisco.
+- Grid: `36 x 36` cells, one building agent per cell.
 - Data: prepared 36 x 36 agent input in `data/agents_initial.json`.
 - Solar: prepared hourly SF solar profile in `data/agents_initial.json`.
-- Simulation time: `30` days, `720` hourly steps.
-- Stress event: day `15` has no solar generation.
+- Disturbance: no solar generation on `2025-01-15`.
 
 ## Energy Sharing Rule
-For each hour, agents first use their own generation and stored energy. If an agent has a deficit, it asks its four grid neighbors for energy. A donor gives:
 
-`gift = min(surplus, energy_request) * norm_donor`
+For each hour, agents first use their own generation and stored energy. If an
+agent has a deficit, it asks its four direct grid neighbors for energy.
 
-This keeps `norm_i` as the only behavioral parameter.
+`gift = min(surplus, energy_request) * generosity`
+
+Two versions are run:
+
+- `generosity = 0`: no energy sharing.
+- `generosity = 1`: donors fully share up to `min(surplus, energy_request)`.
+
+## Healthy / Alive Rule
+
+Healthy balance follows:
+
+`healthy = (generation + starting_storage - demand) + (energy_received - energy_exported)`
+
+A building is alive at time `t` when:
+
+`healthy >= 0`
 
 ## Building Performance Metrics
-The report writes one row per building to `outputs/agents_final.csv`:
 
-- `service_ratio`: month-level served demand fraction.
-- `final_health`: final hourly served demand fraction.
-- `total_demand`: total monthly energy demand.
-- `total_generated`: total monthly solar generation.
-- `total_self_served`: demand served before neighbor sharing.
-- `total_imported`: energy received from neighbors.
-- `total_exported`: energy given to neighbors.
-- `total_unmet`: energy demand not served.
-- `final_storage`: leftover stored energy at the end.
+Only two metrics are reported.
+
+1. `% building alive`
+
+The percent of buildings alive over the evaluated time window.
+
+2. `resilience`
+
+Resilience is normalized to `[0, 1]` as the area under the performance curve:
+
+`R = integral Q(t) dt / integral Q0 dt`
+
+where:
+
+- `Q(t) = % building alive`
+- `Q0 = 100% buildings alive`
+
+Because `Q0 = 100%`, resilience is the average alive fraction over time.
 
 ## Files
+
 - `simple_abm.py`: model runner.
 - `data/agents_initial.json`: compact prepared agent and solar input.
-- `outputs/report.html`: readable summary report.
-- `outputs/agents_final.csv`: simple agent table for continuing work.
-- `outputs/daily_metrics.csv`: one row per simulated day.
-- `outputs/model_data.json`: simple nested data structure with summary, schema, agents, and daily metrics.
+- `outputs/report.html`: comparison report for both generosity versions.
+- `outputs/comparison.csv`: scenario-level metrics.
+- `outputs/generosity_0/`: outputs for no sharing.
+- `outputs/generosity_1/`: outputs for full sharing.
+- `outputs/generosity_*/agents_final.csv`: building-level `% building alive` and `resilience`.
+- `outputs/generosity_*/daily_metrics.csv`: daily `% building alive` and `resilience`.
+- `outputs/generosity_*/hourly_metrics.csv`: hourly `% building alive` and running `resilience`.
+- `outputs/generosity_*/model_data.json`: simple continuation data structure.

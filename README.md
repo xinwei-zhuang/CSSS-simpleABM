@@ -147,16 +147,19 @@ Each hour has two steps:
    meet its demand. Whatever is left over is its `surplus`; whatever is missing
    means it is `short`.
 2. **Share (one simultaneous step).** Every building with a surplus splits
-   `norm * surplus` equally among the neighbors that are short this hour. All
-   buildings do this at once, so there is no ordering and no asking one neighbor
-   at a time.
+   `norm * surplus` equally among the neighbors that are short this hour, but
+   never gives a neighbor more than it needs. All buildings do this at once, so
+   there is no ordering and no asking one neighbor at a time.
 
-`gift to each short neighbor = norm * surplus / (number of short neighbors)`
+`gift to each short neighbor = min(norm * surplus / number_of_short_neighbors, neighbor_shortfall)`
+
+So a donor caps each gift at the smaller of its even share and what the neighbor
+actually lacks, and keeps (and stores) whatever it does not give away.
 
 Two versions are run:
 
 - `norm = 0`: a building shares nothing.
-- `norm = 1`: a building shares all of its spare energy.
+- `norm = 1`: a building shares its spare energy, up to what neighbors need.
 
 ## Healthy / Alive Rule
 
@@ -199,17 +202,15 @@ So resilience is the average system health over time.
 
 ## Does Sharing Help? Parameter Sweep
 
-With this simple sharing rule, sharing (`norm = 1`) **never** beats no-sharing
-(`norm = 0`) across the tested `pv_generation_scale` x `battery_capacity_kwh`
-grid: it is worse at every setting. Generation is spatially uniform, so sharing
-cannot add energy to the system; and because a donor splits *all* its spare
-energy among its short neighbors (often more than they need), it wastes the
-excess and drains its own battery before the no-sun stress, so more buildings
-die permanently. The gap shrinks as energy gets more abundant but stays negative.
-
-A less wasteful rule (cap each gift at the neighbor's actual shortfall) can let
-sharing win in the abundant regime, but that is more complex; this version keeps
-the rule as simple as possible.
+Sharing (`norm = 1`) only beats no-sharing (`norm = 0`) when energy is
+**abundant**: high `pv_generation_scale` **and** large `battery_capacity_kwh`
+(for example `pv_generation_scale = 20`, `battery = 40`: resilience `0.954`
+with sharing vs `0.892` without). In the default scarce setting
+(`pv_generation_scale = 5`, `battery = 5`) sharing is worse. Because generation
+is spatially uniform, sharing cannot add energy to the system; it only moves it,
+and it drains donors' batteries before the no-sun stress, so more buildings die
+permanently. Only when buildings have abundant spare solar and storage does the
+energy a donor shares help more than the reserve it gives up.
 
 See `outputs/sweep_collage.png`, `outputs/sweep_delta_heatmap.png`, and
 `outputs/sweep_results.csv`.

@@ -109,7 +109,8 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str
 
         # Sharing (one simultaneous step, no ordering): each building with spare
         # energy splits norm * surplus equally among the neighbors that are short
-        # this hour. norm = 0 shares nothing; norm = 1 shares all spare energy.
+        # this hour, but never gives a neighbor more than it needs (min of its
+        # share and the neighbor's shortfall). norm = 0 shares nothing.
         for donor in agents:
             spare = surplus.get(donor, 0.0)
             if spare <= 0.0 or donor.norm <= 0.0:
@@ -117,10 +118,12 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str
             short = [n for n in neighbors(donor, by_cell) if n in deficits]
             if not short:
                 continue
-            given = donor.norm * spare
-            gift = given / len(short)
+            share = donor.norm * spare / len(short)
+            given = 0.0
             for n in short:
+                gift = min(share, deficits[n])
                 imports[n] += gift
+                given += gift
                 hour_edges.append([donor.id, n.id])
             exports[donor] += given
             surplus[donor] = spare - given

@@ -55,7 +55,9 @@ Each grid cell is one building agent:
 
 ### Load Profile
 
-The load profile comes from the local SF energy profile data:
+The load profile comes from the local SF energy profile data. The absolute
+paths below are on the author's machine; the prepared result is already
+committed in `data/`, so you do not need these files to run the model.
 
 - Raw profile file: `D:\CSSS2026\cities in petri dish\data\energy_profiles_clean\energy_profiles_hourly_used.csv`
 - Raw building metadata file: `D:\CSSS2026\cities in petri dish\data\energy_profiles_clean\building_energy_metadata.csv`
@@ -105,9 +107,8 @@ The final generation rule is:
 `generation_i(t) = solar_kwh_per_m2(t) * pv_area_m2 * pv_generation_scale`
 
 Every grid cell uses the same `pv_area_m2` and the same `pv_generation_scale`,
-so solar generation potential is still spatially uniform in this minimal
-version. The scaling factor is only a global calibration knob to keep the simple
-model output visually interpretable.
+so solar generation is spatially uniform. `pv_generation_scale = 5.0` is an
+arbitrary multiplier that puts generation on a comparable scale to demand.
 
 ### Battery / Storage Size
 
@@ -122,8 +123,6 @@ Battery size is fixed and uniform across all residential buildings:
 Storage is capped:
 
 `storage_i(t) <= 5.0 kWh`
-
-So all buildings use the same modular battery size and the same modular PV size.
 
 ## Energy Sharing Rule
 
@@ -189,14 +188,14 @@ So resilience is the average system health over time.
 - `simple_abm.py`: model runner.
 - `prepare_agents.py`: helper used to prepare residential-only `agents_initial.json` from the large local SF data.
 - `data/agents_initial.json`: compact prepared agent and solar input. Each agent includes `id`, `row`, `col`, `building_type`, initial `norm`, `profile_id`, and the full 720-hour `demand` load profile.
-- `data/agents_initial_summary.csv`: easier-to-read per-agent initial summary with `profile_id`, PV size, PV scale, battery size, and demand summary statistics.
+- `data/agents_initial_summary.csv`: per-agent initial summary with `profile_id`, PV size, PV scale, battery size, and demand min/mean/max.
 - `outputs/report.html`: comparison report for both norm versions.
-- `outputs/animation.html`: building health over time, with `norm = 0` (no sharing) and `norm = 1` (full sharing) shown side by side. A single time slider (plus play/pause/step) drives both 36 x 36 grids in sync. Cells turn orange when critical (health < 5%) and black once permanently dead. Grey edges mark donor-recipient pairs that have shared at any earlier hour; red edges show sharing in the current hour.
+- `outputs/animation.html`: building health over time, with `norm = 0` (no sharing) and `norm = 1` (full sharing) shown side by side. A single time slider (plus play/pause/step) drives both 36 x 36 grids in sync. Each cell is colored by a 5-band health heatmap (deep red 0-20% to green 80-100%); a cell is black once permanently dead. Black lines mark donor-recipient pairs that have shared at any earlier hour; white lines show sharing in the current hour.
 - `outputs/agent_grid.html`: hoverable 36 x 36 grid; each building shows generation, demand, and storage curves.
 - `outputs/comparison.csv`: scenario-level metrics.
 - `outputs/norm_0/`: outputs for no sharing.
 - `outputs/norm_1/`: outputs for full sharing.
-- `outputs/norm_*/agents_final.csv`: building-level `% building alive` and `resilience`.
-- `outputs/norm_*/daily_metrics.csv`: daily `% building alive` and `resilience`.
-- `outputs/norm_*/hourly_metrics.csv`: hourly `% building alive` and running `resilience`.
+- `outputs/norm_*/agents_final.csv`: per-building `alive_percent`, `critical_percent`, `permanently_dead`, and `resilience`.
+- `outputs/norm_*/daily_metrics.csv`: daily `alive_percent`, `critical_percent`, `permadead_percent`, and `resilience`.
+- `outputs/norm_*/hourly_metrics.csv`: hourly `alive_percent`, `critical_percent`, `permadead_percent`, `q_t`, and running `resilience`.
 - `outputs/norm_*/model_data.json`: simple continuation data structure.

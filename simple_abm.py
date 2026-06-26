@@ -376,7 +376,7 @@ def write_animation(
 </head>
 <body>
   <h1>Building Health Animation</h1>
-  <p class="lead">Each square is one residential building in the 36 x 36 grid. Color shows <code>health_i(t)</code> as a 5-band heatmap from deep red (0&ndash;20%) through green (80&ndash;100%). A cell is <strong>black</strong> once a building has been dead for 24 hours and is permanently dead (it never revives). <strong>Grey</strong> edges mark donor&ndash;recipient pairs that have shared at any earlier hour; <strong>red</strong> edges show sharing in the current hour. One time slider drives both scenarios so they stay in sync.</p>
+  <p class="lead">Each square is one residential building in the 36 x 36 grid. Color shows <code>health_i(t)</code> as a 5-band heatmap from deep red (0&ndash;20%) through green (80&ndash;100%). A cell is <strong>black</strong> once a building has been dead for 24 hours and is permanently dead (it never revives). <strong>Black</strong> lines mark donor&ndash;recipient pairs that have shared at any earlier hour; <strong>white</strong> lines show sharing in the current hour. One time slider drives both scenarios so they stay in sync.</p>
   <div class="controls">
     <button id="play">Play</button>
     <button id="pause">Pause</button>
@@ -404,8 +404,9 @@ def write_animation(
     <div><span class="swatch" style="background:#91cf60"></span>60&ndash;80%</div>
     <div><span class="swatch" style="background:#1a9850"></span>80&ndash;100%</div>
     <div><span class="swatch" style="background:#000000"></span>permanently dead (24 h)</div>
-    <div><span class="swatch" style="background:#969696"></span>has shared earlier</div>
-    <div><span class="swatch" style="background:#e03131"></span>sharing now</div>
+    <div><strong>sharing:</strong></div>
+    <div><span class="swatch" style="background:#000000"></span>black line = has shared earlier</div>
+    <div><span class="swatch" style="background:#ffffff"></span>white line = sharing now</div>
   </div>
   <script>
     const DATA = {json.dumps(payload, separators=(",", ":"))};
@@ -470,17 +471,17 @@ def write_animation(
         ctx.beginPath(); ctx.moveTo(k * cell, 0); ctx.lineTo(k * cell, view.canvas.height); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(0, k * cell); ctx.lineTo(view.canvas.width, k * cell); ctx.stroke();
       }}
-      // grey edges: every donor->requester pair that has shared at any hour up to now
+      // black edges: every donor->requester pair that has shared at any hour up to now
       if (view.cum === undefined || i < view.cumUpto) {{ view.cum = new Set(); view.cumUpto = -1; }}
       for (let t = view.cumUpto + 1; t <= i; t++) {{
         for (const [from, to] of DATA.edges_by_norm[view.key][t]) view.cum.add(from * N + to);
       }}
       view.cumUpto = i;
-      ctx.strokeStyle = "rgba(150,150,150,0.4)";
+      ctx.strokeStyle = "rgba(0,0,0,0.55)";
       ctx.lineWidth = 1.5;
       for (const key of view.cum) drawEdge(ctx, cell, Math.floor(key / N), key % N);
-      // red edges: sharing active in the current hour
-      ctx.strokeStyle = "rgba(224,49,49,0.9)";
+      // white edges: sharing active in the current hour
+      ctx.strokeStyle = "rgba(255,255,255,0.95)";
       ctx.lineWidth = 2.5;
       for (const [from, to] of DATA.edges_by_norm[view.key][i]) drawEdge(ctx, cell, from, to);
 

@@ -11,6 +11,7 @@ GRID = 36
 HOURS = 24 * 30
 NO_SUN_DAY = 15
 PV_AREA_M2 = 1.0
+PV_GENERATION_SCALE = 5.0
 BATTERY_CAPACITY_KWH = 5.0
 SF_BBOX = {"west": -122.515, "east": -122.355, "south": 37.705, "north": 37.812}
 
@@ -103,8 +104,9 @@ def main() -> None:
         "solar_source_variable": "ALLSKY_SFC_SW_DWN",
         "solar_units": "kWh per m2 per hour, computed as W/m2 divided by 1000 for each hourly step",
         "pv_area_m2": PV_AREA_M2,
+        "pv_generation_scale": PV_GENERATION_SCALE,
         "battery_capacity_kwh": BATTERY_CAPACITY_KWH,
-        "solar_generation_rule": "generation_i(t) = solar_kwh_per_m2(t) * pv_area_m2; pv_area_m2 is fixed to 1.0 for every building.",
+        "solar_generation_rule": "generation_i(t) = solar_kwh_per_m2(t) * pv_area_m2 * pv_generation_scale; pv_area_m2 is fixed to 1.0 and pv_generation_scale is fixed to 5.0 for every building.",
         "storage_rule": "storage_i(t) is capped at battery_capacity_kwh; battery_capacity_kwh is fixed to 5.0 for every building.",
         "raw_residential_building_rows": residential_rows,
         "unique_residential_profiles": len(profiles),
@@ -125,6 +127,7 @@ def main() -> None:
                 "norm",
                 "profile_id",
                 "pv_area_m2",
+                "pv_generation_scale",
                 "battery_capacity_kwh",
                 "load_profile_hours",
                 "demand_min",
@@ -144,6 +147,7 @@ def main() -> None:
                     "norm": agent["norm"],
                     "profile_id": agent["profile_id"],
                     "pv_area_m2": PV_AREA_M2,
+                    "pv_generation_scale": PV_GENERATION_SCALE,
                     "battery_capacity_kwh": BATTERY_CAPACITY_KWH,
                     "load_profile_hours": len(demand),
                     "demand_min": round(min(demand), 6),

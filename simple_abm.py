@@ -70,10 +70,11 @@ def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
         writer.writerows(rows)
 
 
-def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str, object], list[list[int]], list[list[int]]]:
+def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str, object], list[list[int]], list[list[int]], list[list[list[int]]]]:
     start = time.perf_counter()
     agents, sun, config = load_input(input_path)
     pv_area_m2 = float(config.get("pv_area_m2", 1.0))
+    pv_generation_scale = float(config.get("pv_generation_scale", 1.0))
     battery_capacity_kwh = float(config.get("battery_capacity_kwh", 5.0))
     for a in agents:
         a.norm = norm
@@ -82,6 +83,7 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str
     daily = []
     frames = []
     storage_frames = []
+    share_edges = []
     day_alive_area = 0.0
 
     for t in range(SIM_HOURS):
@@ -89,10 +91,11 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str
         imports = {a: 0.0 for a in agents}
         exports = {a: 0.0 for a in agents}
         storage_start = {}
+        hour_edges = []
 
         for a in agents:
             d = a.demand[t]
-            g = sun[t] * pv_area_m2
+            g = sun[t] * pv_area_m2 * pv_generation_scale
             storage_start[a] = a.storage
             a.generation = g
             available = a.storage + g
@@ -110,6 +113,8 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str
                 imports[requester] += gift
                 exports[donor] += gift
                 received += gift
+                if gift > 1e-9:
+                    hour_edges.append([donor.id, requester.id])
                 if received >= request:
                     break
 
@@ -133,6 +138,7 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str
 
         frames.append(frame)
         storage_frames.append([int(round(a.storage * 100)) for a in agents])
+        share_edges.append(hour_edges)
         alive_percent = 100.0 * alive_count / len(agents)
         q_t = health_sum / len(agents)
         resilience_so_far = sum(row["q_t"] for row in hourly + [{"q_t": q_t}]) / (t + 1)
@@ -169,8 +175,9 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str
         "solar_source": config.get("solar_source", "data/agents_initial.json"),
         "solar_source_variable": config.get("solar_source_variable", "ALLSKY_SFC_SW_DWN"),
         "pv_area_m2": pv_area_m2,
+        "pv_generation_scale": pv_generation_scale,
         "battery_capacity_kwh": battery_capacity_kwh,
-        "solar_generation_rule": config.get("solar_generation_rule", "generation_i(t) = solar_kwh_per_m2(t) * pv_area_m2"),
+        "solar_generation_rule": config.get("solar_generation_rule", "generation_i(t) = solar_kwh_per_m2(t) * pv_area_m2 * pv_generation_scale"),
         "storage_rule": config.get("storage_rule", "storage_i(t) is capped at battery_capacity_kwh."),
         "agents": len(agents),
         "grid": f'{config["grid"]}x{config["grid"]}',
@@ -185,7 +192,7 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str
         "runtime_seconds": round(time.perf_counter() - start, 3),
     }
     write_outputs(out_dir, agents, hourly, daily, summary)
-    return summary, frames, storage_frames
+    return summary, frames, storage_frames, share_edges
 
 
 def write_outputs(
@@ -270,7 +277,7 @@ def write_report(path: Path, summaries: list[dict[str, object]], base_out: Path)
   <p>Simulation time is explicitly <strong>2025-01-01 00:00 through 2025-01-30 23:00</strong>, with no-sun disturbance on <strong>2025-01-15</strong>.</p>
   <p>Agent state: <code>A_i(t) = {{building_type, norm, generation_i(t), demand_i(t), storage_i(t), health_i(t)}}</code>. This version uses only residential buildings.</p>
   <p>Load profile source: local SF residential rows from <code>energy_profiles_hourly_used.csv</code>, joined to residential buildings in <code>building_energy_metadata.csv</code> by <code>profile_id</code>. The GitHub repo stores the compact prepared version in <code>data/agents_initial.json</code>.</p>
-  <p>Solar generation potential source: cached NASA POWER 2025 hourly <code>ALLSKY_SFC_SW_DWN</code> for San Francisco. Each hourly value is converted from W/m2 to kWh/m2 by dividing by 1000. Generation uses the same fixed PV area for every grid cell: <code>generation_i(t) = solar_kwh_per_m2(t) * 1.0 m2</code>.</p>
+  <p>Solar generation potential source: cached NASA POWER 2025 hourly <code>ALLSKY_SFC_SW_DWN</code> for San Francisco. Each hourly value is converted from W/m2 to kWh/m2 by dividing by 1000. Generation uses the same fixed PV area and the same global scaling factor for every grid cell: <code>generation_i(t) = solar_kwh_per_m2(t) * 1.0 m2 * 5.0</code>.</p>
   <p>Battery/storage size is fixed for every building: <code>battery_capacity_i = 5.0 kWh</code>. <code>storage_i(t)</code> carries unused surplus energy forward and is capped at 5.0 kWh.</p>
   <p>Building health is continuous: <code>health_i(t) = clip((generation + starting_storage + energy_received - energy_exported) / demand, 0, 1)</code>. A building is dead only when <code>health_i(t) = 0</code>.</p>
   <p>Energy sharing rule: <code>gift = min(surplus, energy_request) * norm_donor</code>. The two scenarios set every residential building's <code>norm_i</code> to 0 or 1.</p>
@@ -288,11 +295,17 @@ def write_report(path: Path, summaries: list[dict[str, object]], base_out: Path)
     )
 
 
-def write_animation(path: Path, summaries: list[dict[str, object]], frames_by_norm: dict[str, list[list[int]]]) -> None:
+def write_animation(
+    path: Path,
+    summaries: list[dict[str, object]],
+    frames_by_norm: dict[str, list[list[int]]],
+    edges_by_norm: dict[str, list[list[list[int]]]],
+) -> None:
     payload = {
         "grid": 36,
         "start": SIM_START.strftime("%Y-%m-%d %H:%M"),
         "frames_by_norm": frames_by_norm,
+        "edges_by_norm": edges_by_norm,
         "summaries": summaries,
     }
     path.write_text(
@@ -316,7 +329,7 @@ def write_animation(path: Path, summaries: list[dict[str, object]], frames_by_no
 </head>
 <body>
   <h1>Building Health Animation</h1>
-  <p>Each square is one residential building in the 36 x 36 grid. Color shows <code>health_i(t)</code>: red is 0, green is 1.</p>
+  <p>Each square is one residential building in the 36 x 36 grid. Color shows <code>health_i(t)</code>: red is 0, green is 1. Yellow edges show energy sharing in the current hour.</p>
   <main>
     <section>
       <canvas id="grid" width="720" height="720"></canvas>
@@ -337,6 +350,7 @@ def write_animation(path: Path, summaries: list[dict[str, object]], frames_by_no
       <div id="status"></div>
       <div><span class="swatch" style="background:#8b1e1e"></span>health = 0</div>
       <div><span class="swatch" style="background:#2f8f58"></span>health = 1</div>
+      <div><span class="swatch" style="background:#f2c94c"></span>energy sharing edge</div>
       <p><code>Q(t) = mean_i health_i(t)</code>. Resilience is the average of Q(t) over the simulation.</p>
     </section>
   </main>
@@ -378,6 +392,16 @@ def write_animation(path: Path, summaries: list[dict[str, object]], frames_by_no
           ctx.fillRect(c * cell, r * cell, cell, cell);
         }}
       }}
+      ctx.strokeStyle = "rgba(242,201,76,0.85)";
+      ctx.lineWidth = 2;
+      for (const [from, to] of DATA.edges_by_norm[key][i]) {{
+        const fromRow = Math.floor(from / grid), fromCol = from % grid;
+        const toRow = Math.floor(to / grid), toCol = to % grid;
+        ctx.beginPath();
+        ctx.moveTo((fromCol + 0.5) * cell, (fromRow + 0.5) * cell);
+        ctx.lineTo((toCol + 0.5) * cell, (toRow + 0.5) * cell);
+        ctx.stroke();
+      }}
       ctx.strokeStyle = "rgba(255,255,255,0.25)";
       ctx.lineWidth = 1;
       for (let i = 0; i <= grid; i++) {{
@@ -386,7 +410,8 @@ def write_animation(path: Path, summaries: list[dict[str, object]], frames_by_no
       }}
       q = q / frame.length;
       const alive = frame.filter(v => v > 0).length / frame.length * 100;
-      statusEl.textContent = `Hour ${{i + 1}} / 720 | ${{frameTime(i)}} | alive ${{alive.toFixed(1)}}% | Q(t) ${{q.toFixed(3)}}`;
+      const edgeCount = DATA.edges_by_norm[key][i].length;
+      statusEl.textContent = `Hour ${{i + 1}} / 720 | ${{frameTime(i)}} | alive ${{alive.toFixed(1)}}% | Q(t) ${{q.toFixed(3)}} | sharing edges ${{edgeCount}}`;
     }}
 
     function play() {{
@@ -419,7 +444,8 @@ def write_animation(path: Path, summaries: list[dict[str, object]], frames_by_no
 def write_agent_grid(path: Path, input_path: Path, summaries: list[dict[str, object]], storage_by_norm: dict[str, list[list[int]]]) -> None:
     source = json.loads(input_path.read_text(encoding="utf-8"))
     pv_area_m2 = float(source.get("pv_area_m2", 1.0))
-    generation = [round(float(v) * pv_area_m2, 4) for v in source["sun"]]
+    pv_generation_scale = float(source.get("pv_generation_scale", 1.0))
+    generation = [round(float(v) * pv_area_m2 * pv_generation_scale, 4) for v in source["sun"]]
     agents = [
         {
             "id": int(a["id"]),
@@ -437,6 +463,7 @@ def write_agent_grid(path: Path, input_path: Path, summaries: list[dict[str, obj
         "hours": int(source["hours"]),
         "start": SIM_START.strftime("%Y-%m-%d %H:%M"),
         "pv_area_m2": pv_area_m2,
+        "pv_generation_scale": pv_generation_scale,
         "battery_capacity_kwh": float(source.get("battery_capacity_kwh", 5.0)),
         "generation": generation,
         "agents": agents,
@@ -556,7 +583,7 @@ def write_agent_grid(path: Path, input_path: Path, summaries: list[dict[str, obj
         grid row/col: ${{a.row}}, ${{a.col}}<br>
         type: ${{a.building_type}}<br>
         load profile: <code>${{a.profile_id}}</code><br>
-        PV area: ${{DATA.pv_area_m2}} m2, battery: ${{DATA.battery_capacity_kwh}} kWh<br>
+        PV area: ${{DATA.pv_area_m2}} m2, PV scale: ${{DATA.pv_generation_scale}}, battery: ${{DATA.battery_capacity_kwh}} kWh<br>
         demand range: ${{Math.min(...demand).toFixed(3)}} to ${{Math.max(...demand).toFixed(3)}} kWh
       `;
       drawGrid();
@@ -596,18 +623,20 @@ def main() -> None:
     summaries = []
     frames_by_norm = {}
     storage_by_norm = {}
+    edges_by_norm = {}
 
     for norm in scenarios:
         scenario_dir = outputs / f"norm_{int(norm)}"
-        summary, frames, storage_frames = run_scenario(input_path, scenario_dir, norm)
+        summary, frames, storage_frames, share_edges = run_scenario(input_path, scenario_dir, norm)
         summaries.append(summary)
         frames_by_norm[f"norm_{int(norm)}"] = frames
         storage_by_norm[f"norm_{int(norm)}"] = storage_frames
+        edges_by_norm[f"norm_{int(norm)}"] = share_edges
 
     if len(summaries) == 2:
         write_csv(outputs / "comparison.csv", summaries)
         write_report(outputs / "report.html", summaries, outputs)
-        write_animation(outputs / "animation.html", summaries, frames_by_norm)
+        write_animation(outputs / "animation.html", summaries, frames_by_norm, edges_by_norm)
         write_agent_grid(outputs / "agent_grid.html", input_path, summaries, storage_by_norm)
 
     for summary in summaries:

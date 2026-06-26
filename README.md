@@ -92,16 +92,22 @@ This is hourly all-sky surface shortwave downward irradiance for San Francisco.
 The model uses the first 720 hourly values, converts each value from `W/m2` to
 `kWh/m2` by dividing by `1000`, then sets `2025-01-15` to zero sun.
 
-The simple generation rule is:
-
-`generation_i(t) = solar_kwh_per_m2(t) * pv_area_m2`
-
 The PV size is fixed and uniform across all grid cells:
 
 `pv_area_m2 = 1.0`
 
-Because every grid cell has the same assumed PV area, solar generation potential
-is spatially uniform in this minimal version.
+The model also uses one global PV generation scaling factor:
+
+`pv_generation_scale = 5.0`
+
+The final generation rule is:
+
+`generation_i(t) = solar_kwh_per_m2(t) * pv_area_m2 * pv_generation_scale`
+
+Every grid cell uses the same `pv_area_m2` and the same `pv_generation_scale`,
+so solar generation potential is still spatially uniform in this minimal
+version. The scaling factor is only a global calibration knob to keep the simple
+model output visually interpretable.
 
 ### Battery / Storage Size
 
@@ -171,9 +177,9 @@ So resilience is the average system health over time.
 - `simple_abm.py`: model runner.
 - `prepare_agents.py`: helper used to prepare residential-only `agents_initial.json` from the large local SF data.
 - `data/agents_initial.json`: compact prepared agent and solar input. Each agent includes `id`, `row`, `col`, `building_type`, initial `norm`, `profile_id`, and the full 720-hour `demand` load profile.
-- `data/agents_initial_summary.csv`: easier-to-read per-agent initial summary with `profile_id`, PV size, battery size, and demand summary statistics.
+- `data/agents_initial_summary.csv`: easier-to-read per-agent initial summary with `profile_id`, PV size, PV scale, battery size, and demand summary statistics.
 - `outputs/report.html`: comparison report for both norm versions.
-- `outputs/animation.html`: animated 36 x 36 grid of building health over time.
+- `outputs/animation.html`: animated 36 x 36 grid of building health over time; yellow edges show energy sharing between buildings.
 - `outputs/agent_grid.html`: hoverable 36 x 36 grid; each building shows generation, demand, and storage curves.
 - `outputs/comparison.csv`: scenario-level metrics.
 - `outputs/norm_0/`: outputs for no sharing.

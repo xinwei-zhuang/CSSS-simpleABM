@@ -15,17 +15,20 @@
 <body>
   <h1>Simple SF Energy Sharing ABM</h1>
   <p>Simulation time is explicitly <strong>2025-01-01 00:00 through 2025-01-30 23:00</strong>, with no-sun disturbance on <strong>2025-01-15</strong>.</p>
-  <p>Agent state: <code>A_i(t) = {health_i(t), generation_i(t), demand_i(t), storage_i(t), generosity}</code>.</p>
+  <p>Agent state: <code>A_i(t) = {building_type, norm, generation_i(t), demand_i(t), storage_i(t), health_i(t)}</code>. This version uses only residential buildings.</p>
+  <p>Load profile source: local SF residential rows from <code>energy_profiles_hourly_used.csv</code>, joined to residential buildings in <code>building_energy_metadata.csv</code> by <code>profile_id</code>. The GitHub repo stores the compact prepared version in <code>data/agents_initial.json</code>.</p>
+  <p>Solar generation potential source: cached NASA POWER 2025 hourly <code>ALLSKY_SFC_SW_DWN</code> for San Francisco, normalized to [0, 1]. Generation uses <code>generation_i(t) = normalized_solar(t) * max(demand_i)</code>.</p>
+  <p>Battery/storage size source: no external battery-size data is used. <code>storage_i(t)</code> is only carried-over unused surplus energy from the previous hour; the minimal model has no battery capacity parameter.</p>
   <p>Building health is continuous: <code>health_i(t) = clip((generation + starting_storage + energy_received - energy_exported) / demand, 0, 1)</code>. A building is dead only when <code>health_i(t) = 0</code>.</p>
-  <p>Energy sharing rule: <code>gift = min(surplus, energy_request) * generosity</code>.</p>
+  <p>Energy sharing rule: <code>gift = min(surplus, energy_request) * norm_donor</code>. The two scenarios set every residential building's <code>norm_i</code> to 0 or 1.</p>
   <p>Only two performance metrics are reported: <strong>% building alive</strong> and <strong>resilience</strong>. Here <code>Q(t)</code> is system performance, defined as the average building health: <code>Q(t) = mean_i health_i(t)</code>. Resilience is normalized area under that curve: <code>R = integral Q(t) dt / integral Q0 dt</code>, where <code>Q0 = 1</code>.</p>
   <table>
-    <thead><tr><th>Generosity</th><th>Start</th><th>End</th><th>No-sun date</th><th>% Building Alive</th><th>Resilience</th></tr></thead>
-    <tbody><tr><td>0.0</td><td>2025-01-01 00:00</td><td>2025-01-30 23:00</td><td>2025-01-15</td><td>86.23%</td><td>0.8309</td></tr>
-<tr><td>1.0</td><td>2025-01-01 00:00</td><td>2025-01-30 23:00</td><td>2025-01-15</td><td>85.84%</td><td>0.8333</td></tr></tbody>
+    <thead><tr><th>Norm</th><th>Start</th><th>End</th><th>No-sun date</th><th>% Building Alive</th><th>Resilience</th></tr></thead>
+    <tbody><tr><td>0.0</td><td>2025-01-01 00:00</td><td>2025-01-30 23:00</td><td>2025-01-15</td><td>88.75%</td><td>0.8632</td></tr>
+<tr><td>1.0</td><td>2025-01-01 00:00</td><td>2025-01-30 23:00</td><td>2025-01-15</td><td>93.81%</td><td>0.9263</td></tr></tbody>
   </table>
   <h2>Files</h2>
-  <ul><li>generosity = 0.0: <a href="generosity_0/daily_metrics.csv">daily metrics</a>, <a href="generosity_0/hourly_metrics.csv">hourly metrics</a>, <a href="generosity_0/agents_final.csv">building metrics</a></li>
-<li>generosity = 1.0: <a href="generosity_1/daily_metrics.csv">daily metrics</a>, <a href="generosity_1/hourly_metrics.csv">hourly metrics</a>, <a href="generosity_1/agents_final.csv">building metrics</a></li></ul>
+  <ul><li>norm = 0.0: <a href="norm_0/daily_metrics.csv">daily metrics</a>, <a href="norm_0/hourly_metrics.csv">hourly metrics</a>, <a href="norm_0/agents_final.csv">building metrics</a></li>
+<li>norm = 1.0: <a href="norm_1/daily_metrics.csv">daily metrics</a>, <a href="norm_1/hourly_metrics.csv">hourly metrics</a>, <a href="norm_1/agents_final.csv">building metrics</a></li></ul>
 </body>
 </html>

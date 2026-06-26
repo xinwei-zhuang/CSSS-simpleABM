@@ -20,6 +20,8 @@ class Agent:
     id: int
     row: int
     col: int
+    building_type: str
+    norm: float
     demand: list[float]
     storage: float = 0.0
     generation: float = 0.0
@@ -43,6 +45,8 @@ def load_input(path: Path) -> tuple[list[Agent], list[float], dict[str, object]]
             id=int(a["id"]),
             row=int(a["row"]),
             col=int(a["col"]),
+            building_type=str(a.get("building_type", "residential")),
+            norm=float(a.get("norm", 0.0)),
             demand=[float(x) for x in a["demand"]],
         )
         for a in data["agents"]
@@ -66,9 +70,11 @@ def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
         writer.writerows(rows)
 
 
-def run_scenario(input_path: Path, out_dir: Path, generosity: float) -> dict[str, object]:
+def run_scenario(input_path: Path, out_dir: Path, norm: float) -> dict[str, object]:
     start = time.perf_counter()
     agents, sun, config = load_input(input_path)
+    for a in agents:
+        a.norm = norm
     by_cell = {(a.row, a.col): a for a in agents}
     hourly = []
     daily = []
@@ -95,7 +101,7 @@ def run_scenario(input_path: Path, out_dir: Path, generosity: float) -> dict[str
         for requester, request in deficits.items():
             received = 0.0
             for donor in sorted(neighbors(requester, by_cell), key=lambda x: x.id):
-                gift = min(surplus.get(donor, 0.0), request - received) * generosity
+                gift = min(surplus.get(donor, 0.0), request - received) * donor.norm
                 surplus[donor] = surplus.get(donor, 0.0) - gift
                 imports[requester] += gift
                 exports[donor] += gift
@@ -149,7 +155,12 @@ def run_scenario(input_path: Path, out_dir: Path, generosity: float) -> dict[str
             day_alive_area = 0.0
 
     summary = {
-        "generosity": generosity,
+        "norm": norm,
+        "building_type_filter": config.get("building_type_filter", "residential"),
+        "load_profile_source": config.get("load_profile_source", "data/agents_initial.json"),
+        "solar_source": config.get("solar_source", "data/agents_initial.json"),
+        "solar_generation_rule": config.get("solar_generation_rule", "generation_i(t) = normalized_solar(t) * max(demand_i)"),
+        "storage_rule": config.get("storage_rule", "storage_i(t) is carried-over unused surplus energy; no battery capacity parameter is used."),
         "agents": len(agents),
         "grid": f'{config["grid"]}x{config["grid"]}',
         "simulation_start": SIM_START.strftime("%Y-%m-%d %H:%M"),
@@ -179,6 +190,8 @@ def write_outputs(
             "id": a.id,
             "row": a.row,
             "col": a.col,
+            "building_type": a.building_type,
+            "norm": round(a.norm, 4),
             "alive_percent": round(a.alive_percent, 4),
             "resilience": round(a.resilience, 6),
         }
@@ -192,7 +205,7 @@ def write_outputs(
             {
                 "summary": summary,
                 "data_structure": {
-                    "agent_state": ["health_i", "generation_i", "demand_i", "storage_i", "generosity"],
+                    "agent_definition": ["building_type", "norm", "generation_i(t)", "demand_i(t)", "storage_i(t)", "health_i(t)"],
                     "building_performance_metrics": ["alive_percent", "resilience"],
                     "hourly_metrics": ["alive_percent", "q_t", "resilience"],
                     "daily_metrics": ["alive_percent", "q_t", "resilience"],
@@ -210,7 +223,7 @@ def write_outputs(
 def write_report(path: Path, summaries: list[dict[str, object]], base_out: Path) -> None:
     rows = "\n".join(
         "<tr>"
-        f"<td>{html.escape(str(s['generosity']))}</td>"
+        f"<td>{html.escape(str(s['norm']))}</td>"
         f"<td>{html.escape(str(s['simulation_start']))}</td>"
         f"<td>{html.escape(str(s['simulation_end']))}</td>"
         f"<td>{html.escape(str(s['no_sun_date']))}</td>"
@@ -220,10 +233,10 @@ def write_report(path: Path, summaries: list[dict[str, object]], base_out: Path)
         for s in summaries
     )
     links = "\n".join(
-        f"<li>generosity = {html.escape(str(s['generosity']))}: "
-        f"<a href=\"generosity_{int(float(s['generosity']))}/daily_metrics.csv\">daily metrics</a>, "
-        f"<a href=\"generosity_{int(float(s['generosity']))}/hourly_metrics.csv\">hourly metrics</a>, "
-        f"<a href=\"generosity_{int(float(s['generosity']))}/agents_final.csv\">building metrics</a></li>"
+        f"<li>norm = {html.escape(str(s['norm']))}: "
+        f"<a href=\"norm_{int(float(s['norm']))}/daily_metrics.csv\">daily metrics</a>, "
+        f"<a href=\"norm_{int(float(s['norm']))}/hourly_metrics.csv\">hourly metrics</a>, "
+        f"<a href=\"norm_{int(float(s['norm']))}/agents_final.csv\">building metrics</a></li>"
         for s in summaries
     )
     path.write_text(
@@ -244,12 +257,15 @@ def write_report(path: Path, summaries: list[dict[str, object]], base_out: Path)
 <body>
   <h1>Simple SF Energy Sharing ABM</h1>
   <p>Simulation time is explicitly <strong>2025-01-01 00:00 through 2025-01-30 23:00</strong>, with no-sun disturbance on <strong>2025-01-15</strong>.</p>
-  <p>Agent state: <code>A_i(t) = {{health_i(t), generation_i(t), demand_i(t), storage_i(t), generosity}}</code>.</p>
+  <p>Agent state: <code>A_i(t) = {{building_type, norm, generation_i(t), demand_i(t), storage_i(t), health_i(t)}}</code>. This version uses only residential buildings.</p>
+  <p>Load profile source: local SF residential rows from <code>energy_profiles_hourly_used.csv</code>, joined to residential buildings in <code>building_energy_metadata.csv</code> by <code>profile_id</code>. The GitHub repo stores the compact prepared version in <code>data/agents_initial.json</code>.</p>
+  <p>Solar generation potential source: cached NASA POWER 2025 hourly <code>ALLSKY_SFC_SW_DWN</code> for San Francisco, normalized to [0, 1]. Generation uses <code>generation_i(t) = normalized_solar(t) * max(demand_i)</code>.</p>
+  <p>Battery/storage size source: no external battery-size data is used. <code>storage_i(t)</code> is only carried-over unused surplus energy from the previous hour; the minimal model has no battery capacity parameter.</p>
   <p>Building health is continuous: <code>health_i(t) = clip((generation + starting_storage + energy_received - energy_exported) / demand, 0, 1)</code>. A building is dead only when <code>health_i(t) = 0</code>.</p>
-  <p>Energy sharing rule: <code>gift = min(surplus, energy_request) * generosity</code>.</p>
+  <p>Energy sharing rule: <code>gift = min(surplus, energy_request) * norm_donor</code>. The two scenarios set every residential building's <code>norm_i</code> to 0 or 1.</p>
   <p>Only two performance metrics are reported: <strong>% building alive</strong> and <strong>resilience</strong>. Here <code>Q(t)</code> is system performance, defined as the average building health: <code>Q(t) = mean_i health_i(t)</code>. Resilience is normalized area under that curve: <code>R = integral Q(t) dt / integral Q0 dt</code>, where <code>Q0 = 1</code>.</p>
   <table>
-    <thead><tr><th>Generosity</th><th>Start</th><th>End</th><th>No-sun date</th><th>% Building Alive</th><th>Resilience</th></tr></thead>
+    <thead><tr><th>Norm</th><th>Start</th><th>End</th><th>No-sun date</th><th>% Building Alive</th><th>Resilience</th></tr></thead>
     <tbody>{rows}</tbody>
   </table>
   <h2>Files</h2>
@@ -263,18 +279,20 @@ def write_report(path: Path, summaries: list[dict[str, object]], base_out: Path)
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--generosity", type=float, choices=[0.0, 1.0], help="Run only one scenario.")
+    parser.add_argument("--norm", type=float, choices=[0.0, 1.0], help="Run only one norm scenario.")
+    parser.add_argument("--generosity", type=float, choices=[0.0, 1.0], help="Backward-compatible alias for --norm.")
     args = parser.parse_args()
 
     base = Path(__file__).resolve().parent
     input_path = base / "data" / "agents_initial.json"
     outputs = base / "outputs"
-    scenarios = [args.generosity] if args.generosity is not None else [0.0, 1.0]
+    requested_norm = args.norm if args.norm is not None else args.generosity
+    scenarios = [requested_norm] if requested_norm is not None else [0.0, 1.0]
     summaries = []
 
-    for generosity in scenarios:
-        scenario_dir = outputs / f"generosity_{int(generosity)}"
-        summaries.append(run_scenario(input_path, scenario_dir, generosity))
+    for norm in scenarios:
+        scenario_dir = outputs / f"norm_{int(norm)}"
+        summaries.append(run_scenario(input_path, scenario_dir, norm))
 
     if len(summaries) == 2:
         write_csv(outputs / "comparison.csv", summaries)
@@ -282,7 +300,7 @@ def main() -> None:
 
     for summary in summaries:
         print(
-            f"generosity={summary['generosity']}, "
+            f"norm={summary['norm']}, "
             f"alive_percent={summary['alive_percent']}, "
             f"resilience={summary['resilience']}, "
             f"time={summary['simulation_start']} to {summary['simulation_end']}"

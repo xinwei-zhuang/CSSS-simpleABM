@@ -3,6 +3,9 @@
 This repository contains only the simple ABM, a compact prepared input file, and
 generated reports. The large raw SF source CSV files are not included.
 
+This version uses **residential buildings only**. Commercial load profiles are
+not used.
+
 Run both scenarios:
 
 ```bash
@@ -12,8 +15,8 @@ python simple_abm.py
 Run one scenario:
 
 ```bash
-python simple_abm.py --generosity 0
-python simple_abm.py --generosity 1
+python simple_abm.py --norm 0
+python simple_abm.py --norm 1
 ```
 
 ## Simulation Time
@@ -30,33 +33,97 @@ The simulation covers exactly 30 days:
 
 Each grid cell is one building agent:
 
-`A_i(t) = {health_i(t), generation_i(t), demand_i(t), storage_i(t), generosity}`
+`A_i(t) = {building_type, norm, generation_i(t), demand_i(t), storage_i(t), health_i(t)}`
 
+- `building_type`: fixed to `residential` in this version.
+- `norm`: energy sharing norm. The two scenarios set all residential buildings to `0` or `1`.
 - `health_i(t)`: building health at time `t`, normalized to `[0, 1]`.
 - `generation_i(t)`: solar generation for the hour.
 - `demand_i(t)`: hourly load sampled from the prepared SF building energy profiles.
 - `storage_i(t)`: unused surplus carried to the next hour.
-- `generosity`: energy sharing parameter. This repo runs two versions: `0` and `1`.
 
 ## Environment
 
 - Location: San Francisco.
 - Grid: `36 x 36` cells, one building agent per cell.
-- Data: prepared 36 x 36 agent input in `data/agents_initial.json`.
+- Building type filter: `residential` only.
+- Data: prepared 36 x 36 residential agent input in `data/agents_initial.json`.
 - Solar: prepared hourly SF solar profile in `data/agents_initial.json`.
 - Disturbance: no solar generation on `2025-01-15`.
+
+## Data Sources And Assumptions
+
+### Load Profile
+
+The load profile comes from the local SF energy profile data:
+
+- Raw profile file: `D:\CSSS2026\cities in petri dish\data\energy_profiles_clean\energy_profiles_hourly_used.csv`
+- Raw building metadata file: `D:\CSSS2026\cities in petri dish\data\energy_profiles_clean\building_energy_metadata.csv`
+
+The raw profile file contains hourly load profiles with columns like:
+
+`profile_id, profile_type, t0001, t0002, ..., t8761`
+
+The raw building metadata file assigns buildings to profiles using `profile_id`.
+For this simple ABM, only rows with:
+
+`profile_type = residential`
+
+are used. Commercial rows are ignored. The prepared residential-only data is
+stored in:
+
+`data/agents_initial.json`
+
+Each agent stores a 720-hour residential demand vector:
+
+`demand_i(t)`
+
+### Solar Generation Potential
+
+Solar generation potential comes from the local cached NASA POWER file:
+
+`D:\CSSS2026\cities in petri dish\data\sf_terrain_energy_growth_cache\nasa_power_sf_2025_hourly.json`
+
+The source variable is:
+
+`ALLSKY_SFC_SW_DWN`
+
+This is hourly all-sky surface shortwave downward irradiance for San Francisco.
+The model normalizes the first 720 hourly values to `[0, 1]`, then sets
+`2025-01-15` to zero sun.
+
+The simple generation rule is:
+
+`generation_i(t) = normalized_solar(t) * max(demand_i)`
+
+So there is no separate PV-size parameter in this minimal version. Each
+residential building's solar generation potential is scaled by its own peak
+hourly demand.
+
+### Battery / Storage Size
+
+There is no external battery storage size data in this minimal ABM.
+
+`storage_i(t)` is a state variable, not an input parameter. It starts at `0` and
+is updated from unused surplus energy:
+
+`storage_i(t+1) = unused surplus after self-use and sharing`
+
+The current minimal model does **not** use a battery capacity limit. In other
+words, there is no battery-size parameter and no battery-size data source yet.
+This keeps `norm` as the only sharing behavior variable.
 
 ## Energy Sharing Rule
 
 For each hour, agents first use their own generation and stored energy. If an
 agent has a deficit, it asks its four direct grid neighbors for energy.
 
-`gift = min(surplus, energy_request) * generosity`
+`gift = min(surplus, energy_request) * norm_donor`
 
 Two versions are run:
 
-- `generosity = 0`: no energy sharing.
-- `generosity = 1`: donors fully share up to `min(surplus, energy_request)`.
+- `norm = 0`: no energy sharing.
+- `norm = 1`: donors fully share up to `min(surplus, energy_request)`.
 
 ## Healthy / Alive Rule
 
@@ -96,12 +163,13 @@ So resilience is the average system health over time.
 ## Files
 
 - `simple_abm.py`: model runner.
+- `prepare_agents.py`: helper used to prepare residential-only `agents_initial.json` from the large local SF data.
 - `data/agents_initial.json`: compact prepared agent and solar input.
-- `outputs/report.html`: comparison report for both generosity versions.
+- `outputs/report.html`: comparison report for both norm versions.
 - `outputs/comparison.csv`: scenario-level metrics.
-- `outputs/generosity_0/`: outputs for no sharing.
-- `outputs/generosity_1/`: outputs for full sharing.
-- `outputs/generosity_*/agents_final.csv`: building-level `% building alive` and `resilience`.
-- `outputs/generosity_*/daily_metrics.csv`: daily `% building alive` and `resilience`.
-- `outputs/generosity_*/hourly_metrics.csv`: hourly `% building alive` and running `resilience`.
-- `outputs/generosity_*/model_data.json`: simple continuation data structure.
+- `outputs/norm_0/`: outputs for no sharing.
+- `outputs/norm_1/`: outputs for full sharing.
+- `outputs/norm_*/agents_final.csv`: building-level `% building alive` and `resilience`.
+- `outputs/norm_*/daily_metrics.csv`: daily `% building alive` and `resilience`.
+- `outputs/norm_*/hourly_metrics.csv`: hourly `% building alive` and running `resilience`.
+- `outputs/norm_*/model_data.json`: simple continuation data structure.

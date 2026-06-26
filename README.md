@@ -126,15 +126,28 @@ Storage is capped:
 
 ## Energy Sharing Rule
 
-For each hour, agents first use their own generation and stored energy. If an
-agent has a deficit, it asks its four direct grid neighbors for energy.
+Each hour has two steps:
 
-`gift = min(surplus, energy_request) * norm_donor`
+1. **Self-use.** Every building uses its own generation plus stored energy to
+   meet its demand. Whatever is left over is its `surplus`; whatever is missing
+   is its `deficit`.
+2. **Share (one simultaneous step).** Every building with a surplus gives at
+   once, with no ordering between buildings. A donor gives `norm * surplus`,
+   but never more than its short neighbors collectively need this hour, and
+   splits that gift between those neighbors in proportion to how much each one
+   lacks.
+
+So sharing is **donor-driven and simultaneous**: a building does not ask its
+neighbors one at a time, and there is no first-come-first-served ordering. Every
+donor looks at which of its four neighbors are short this hour and divides its
+spare energy among them in a single step.
+
+`gift(donor -> neighbor) = min(surplus, total_neighbor_need) * norm_donor * (neighbor_deficit / total_neighbor_need)`
 
 Two versions are run:
 
-- `norm = 0`: no energy sharing.
-- `norm = 1`: donors fully share up to `min(surplus, energy_request)`.
+- `norm = 0`: a building shares nothing.
+- `norm = 1`: a building shares all of its spare energy (up to what neighbors need).
 
 ## Healthy / Alive Rule
 
@@ -183,6 +196,19 @@ where:
 
 So resilience is the average system health over time.
 
+## Does Sharing Help? Parameter Sweep
+
+Sharing (`norm = 1`) only beats no-sharing (`norm = 0`) when energy is
+**abundant**: high `pv_generation_scale` **and** large `battery_capacity_kwh`.
+In the default scarce setting (`pv_generation_scale = 5`, `battery = 5`) sharing
+is worse. Because generation is spatially uniform, sharing cannot add energy to
+the system; it only moves it, and it drains donors' batteries before the no-sun
+stress, so more buildings die permanently. Sharing wins only when buildings have
+so much spare solar and storage that the shared energy would otherwise be lost.
+
+See `outputs/sweep_collage.png`, `outputs/sweep_delta_heatmap.png`, and
+`outputs/sweep_results.csv`.
+
 ## Files
 
 - `simple_abm.py`: model runner.
@@ -193,6 +219,9 @@ So resilience is the average system health over time.
 - `outputs/animation.html`: building health over time, with `norm = 0` (no sharing) and `norm = 1` (full sharing) shown side by side. A single time slider (plus play/pause/step) drives both 36 x 36 grids in sync. Each cell is colored by a 5-band health heatmap (deep red 0-20% to green 80-100%); a cell is black once permanently dead. Black lines mark donor-recipient pairs that have shared at any earlier hour; white lines show sharing in the current hour.
 - `outputs/agent_grid.html`: hoverable 36 x 36 grid; each building shows generation, demand, and storage curves.
 - `outputs/comparison.csv`: scenario-level metrics.
+- `outputs/sweep_results.csv`: resilience and alive % for both norms across a `pv_generation_scale` x `battery_capacity_kwh` grid, with the share-minus-no-share delta.
+- `outputs/sweep_collage.png`: per-building resilience maps, left = no sharing, right = sharing, one row per `pv_generation_scale` (battery fixed at the most share-favorable value).
+- `outputs/sweep_delta_heatmap.png`: `resilience(share) - resilience(no-share)` across the full grid; blue = sharing wins, red = sharing loses.
 - `outputs/norm_0/`: outputs for no sharing.
 - `outputs/norm_1/`: outputs for full sharing.
 - `outputs/norm_*/agents_final.csv`: per-building `alive_percent`, `critical_percent`, `permanently_dead`, and `resilience`.

@@ -119,18 +119,23 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str
             else:
                 deficits[a] = d - available
 
-        for requester, request in deficits.items():
-            received = 0.0
-            for donor in sorted(neighbors(requester, by_cell), key=lambda x: x.id):
-                gift = min(surplus.get(donor, 0.0), request - received) * donor.norm
-                surplus[donor] = surplus.get(donor, 0.0) - gift
-                imports[requester] += gift
-                exports[donor] += gift
-                received += gift
-                if gift > 1e-9:
-                    hour_edges.append([donor.id, requester.id])
-                if received >= request:
-                    break
+        # Sharing: one simultaneous, donor-driven step (no ordering, no iteration).
+        # A building with spare energy gives norm * surplus, capped at what its
+        # short neighbors need this hour, split in proportion to each shortfall.
+        for donor in agents:
+            spare = surplus.get(donor, 0.0)
+            if spare <= 0.0 or donor.norm <= 0.0:
+                continue
+            short = [n for n in neighbors(donor, by_cell) if n in deficits]
+            need = sum(deficits[n] for n in short)
+            if need <= 0.0:
+                continue
+            given = min(spare, need) * donor.norm
+            for n in short:
+                imports[n] += given * deficits[n] / need
+                hour_edges.append([donor.id, n.id])
+            exports[donor] += given
+            surplus[donor] = spare - given
 
         for donor, left in surplus.items():
             donor.storage = min(left, battery_capacity_kwh)
@@ -321,7 +326,7 @@ def write_report(path: Path, summaries: list[dict[str, object]], base_out: Path)
   <p>Solar generation potential source: cached NASA POWER 2025 hourly <code>ALLSKY_SFC_SW_DWN</code> for San Francisco. Each hourly value is converted from W/m2 to kWh/m2 by dividing by 1000. Generation uses the same fixed PV area and the same global scaling factor for every grid cell: <code>generation_i(t) = solar_kwh_per_m2(t) * 1.0 m2 * 5.0</code>.</p>
   <p>Battery/storage size is fixed for every building: <code>battery_capacity_i = 5.0 kWh</code>. <code>storage_i(t)</code> carries unused surplus energy forward and is capped at 5.0 kWh.</p>
   <p>Building health is continuous: <code>health_i(t) = clip((generation + starting_storage + energy_received - energy_exported) / demand, 0, 1)</code>. A building is dead at hour <code>t</code> when <code>health_i(t) = 0</code>, and is <strong>critical</strong> when <code>0 &lt; health_i(t) &lt; 0.05</code>. If a building stays dead for <strong>24 consecutive hours</strong> it is <strong>permanently dead</strong>: from then on its health is fixed at 0 and it never revives, generates, or shares.</p>
-  <p>Energy sharing rule: <code>gift = min(surplus, energy_request) * norm_donor</code>. The two scenarios set every residential building's <code>norm_i</code> to 0 or 1.</p>
+  <p>Energy sharing rule (one simultaneous, donor-driven step): a building with spare energy gives <code>norm * surplus</code>, capped at what its short neighbors need this hour, split in proportion to each neighbor's shortfall. The two scenarios set every residential building's <code>norm_i</code> to 0 (share nothing) or 1 (share all spare energy).</p>
   <p>Performance metrics: <strong>% building alive</strong> (<code>health &gt; 0</code>), <strong>% critical</strong> (<code>health &lt; 5%</code>), <strong>% permanently dead</strong>, and <strong>resilience</strong>. Here <code>Q(t)</code> is system performance, defined as the average building health: <code>Q(t) = mean_i health_i(t)</code>. Resilience is normalized area under that curve: <code>R = integral Q(t) dt / integral Q0 dt</code>, where <code>Q0 = 1</code>.</p>
   <table>
     <thead><tr><th>Norm</th><th>Start</th><th>End</th><th>No-sun date</th><th>% Building Alive</th><th>% Critical</th><th>% Perma-dead</th><th>Resilience</th></tr></thead>

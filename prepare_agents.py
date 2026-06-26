@@ -113,6 +113,44 @@ def main() -> None:
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+    summary_path = args.out.with_name("agents_initial_summary.csv")
+    with summary_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "id",
+                "row",
+                "col",
+                "building_type",
+                "norm",
+                "profile_id",
+                "pv_area_m2",
+                "battery_capacity_kwh",
+                "load_profile_hours",
+                "demand_min",
+                "demand_mean",
+                "demand_max",
+            ],
+        )
+        writer.writeheader()
+        for agent in agents:
+            demand = agent["demand"]
+            writer.writerow(
+                {
+                    "id": agent["id"],
+                    "row": agent["row"],
+                    "col": agent["col"],
+                    "building_type": agent["building_type"],
+                    "norm": agent["norm"],
+                    "profile_id": agent["profile_id"],
+                    "pv_area_m2": PV_AREA_M2,
+                    "battery_capacity_kwh": BATTERY_CAPACITY_KWH,
+                    "load_profile_hours": len(demand),
+                    "demand_min": round(min(demand), 6),
+                    "demand_mean": round(sum(demand) / len(demand), 6),
+                    "demand_max": round(max(demand), 6),
+                }
+            )
     print(args.out)
 
 

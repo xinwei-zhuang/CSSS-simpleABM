@@ -70,7 +70,7 @@ def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
         writer.writerows(rows)
 
 
-def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str, object], list[list[int]]]:
+def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str, object], list[list[int]], list[list[int]]]:
     start = time.perf_counter()
     agents, sun, config = load_input(input_path)
     pv_area_m2 = float(config.get("pv_area_m2", 1.0))
@@ -81,6 +81,7 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str
     hourly = []
     daily = []
     frames = []
+    storage_frames = []
     day_alive_area = 0.0
 
     for t in range(SIM_HOURS):
@@ -131,6 +132,7 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str
                 a.alive_hours += 1
 
         frames.append(frame)
+        storage_frames.append([int(round(a.storage * 100)) for a in agents])
         alive_percent = 100.0 * alive_count / len(agents)
         q_t = health_sum / len(agents)
         resilience_so_far = sum(row["q_t"] for row in hourly + [{"q_t": q_t}]) / (t + 1)
@@ -183,7 +185,7 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str
         "runtime_seconds": round(time.perf_counter() - start, 3),
     }
     write_outputs(out_dir, agents, hourly, daily, summary)
-    return summary, frames
+    return summary, frames, storage_frames
 
 
 def write_outputs(
@@ -278,7 +280,7 @@ def write_report(path: Path, summaries: list[dict[str, object]], base_out: Path)
     <tbody>{rows}</tbody>
   </table>
   <h2>Files</h2>
-  <ul>{links}<li><a href="animation.html">animated health grid</a></li></ul>
+  <ul>{links}<li><a href="animation.html">animated health grid</a></li><li><a href="agent_grid.html">building generation/demand/storage hover grid</a></li></ul>
 </body>
 </html>
 """,
@@ -414,6 +416,172 @@ def write_animation(path: Path, summaries: list[dict[str, object]], frames_by_no
     )
 
 
+def write_agent_grid(path: Path, input_path: Path, summaries: list[dict[str, object]], storage_by_norm: dict[str, list[list[int]]]) -> None:
+    source = json.loads(input_path.read_text(encoding="utf-8"))
+    pv_area_m2 = float(source.get("pv_area_m2", 1.0))
+    generation = [round(float(v) * pv_area_m2, 4) for v in source["sun"]]
+    agents = [
+        {
+            "id": int(a["id"]),
+            "row": int(a["row"]),
+            "col": int(a["col"]),
+            "building_type": a.get("building_type", "residential"),
+            "norm": float(a.get("norm", 0.0)),
+            "profile_id": a.get("profile_id", ""),
+            "demand": [round(float(v), 4) for v in a["demand"]],
+        }
+        for a in source["agents"]
+    ]
+    payload = {
+        "grid": int(source["grid"]),
+        "hours": int(source["hours"]),
+        "start": SIM_START.strftime("%Y-%m-%d %H:%M"),
+        "pv_area_m2": pv_area_m2,
+        "battery_capacity_kwh": float(source.get("battery_capacity_kwh", 5.0)),
+        "generation": generation,
+        "agents": agents,
+        "storage_by_norm": storage_by_norm,
+        "summaries": summaries,
+    }
+    path.write_text(
+        f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Building Energy Curves</title>
+  <style>
+    body {{ font-family: Arial, sans-serif; margin: 28px; color: #17202a; background: #f7f8f4; }}
+    main {{ display: grid; grid-template-columns: minmax(360px, 620px) minmax(340px, 1fr); gap: 24px; align-items: start; }}
+    canvas {{ background: white; border: 1px solid #cfd7c7; }}
+    #grid {{ width: 100%; max-width: 620px; aspect-ratio: 1; }}
+    #chart {{ width: 100%; max-width: 780px; height: 360px; }}
+    label, select {{ font: inherit; }}
+    .legend span {{ display: inline-block; width: 18px; height: 3px; margin-right: 6px; vertical-align: middle; }}
+    code {{ background: #eef1e8; padding: 2px 4px; border-radius: 4px; }}
+    .meta {{ line-height: 1.5; }}
+  </style>
+</head>
+<body>
+  <h1>Generation / Demand / Storage Grid</h1>
+  <p>Hover over a cell in the 36 x 36 grid to show that building's 720-hour curves.</p>
+  <main>
+    <section>
+      <canvas id="grid" width="720" height="720"></canvas>
+    </section>
+    <section>
+      <label>Storage scenario
+        <select id="scenario">
+          <option value="norm_0">norm = 0</option>
+          <option value="norm_1">norm = 1</option>
+        </select>
+      </label>
+      <p class="legend">
+        <span style="background:#2f6fbb"></span>generation
+        <span style="background:#b4493f"></span>demand
+        <span style="background:#2f8f58"></span>storage
+      </p>
+      <canvas id="chart" width="860" height="360"></canvas>
+      <div id="meta" class="meta"></div>
+    </section>
+  </main>
+  <script>
+    const DATA = {json.dumps(payload, separators=(",", ":"))};
+    const gridCanvas = document.getElementById("grid");
+    const gridCtx = gridCanvas.getContext("2d");
+    const chart = document.getElementById("chart");
+    const chartCtx = chart.getContext("2d");
+    const scenario = document.getElementById("scenario");
+    const meta = document.getElementById("meta");
+    const grid = DATA.grid;
+    const cell = gridCanvas.width / grid;
+    let selected = 0;
+
+    function drawGrid() {{
+      for (const a of DATA.agents) {{
+        const peak = Math.max(...a.demand);
+        const shade = Math.max(35, 240 - Math.min(180, peak * 30));
+        gridCtx.fillStyle = `rgb(${{shade}},${{shade}},${{shade}})`;
+        gridCtx.fillRect(a.col * cell, a.row * cell, cell, cell);
+      }}
+      gridCtx.strokeStyle = "rgba(255,255,255,0.4)";
+      for (let i = 0; i <= grid; i++) {{
+        gridCtx.beginPath(); gridCtx.moveTo(i * cell, 0); gridCtx.lineTo(i * cell, gridCanvas.height); gridCtx.stroke();
+        gridCtx.beginPath(); gridCtx.moveTo(0, i * cell); gridCtx.lineTo(gridCanvas.width, i * cell); gridCtx.stroke();
+      }}
+      const a = DATA.agents[selected];
+      gridCtx.strokeStyle = "#f2c94c";
+      gridCtx.lineWidth = 4;
+      gridCtx.strokeRect(a.col * cell + 2, a.row * cell + 2, cell - 4, cell - 4);
+      gridCtx.lineWidth = 1;
+    }}
+
+    function drawLine(values, maxY, color) {{
+      chartCtx.beginPath();
+      values.forEach((v, i) => {{
+        const x = 48 + i / (values.length - 1) * (chart.width - 68);
+        const y = 26 + (1 - v / maxY) * (chart.height - 66);
+        if (i === 0) chartCtx.moveTo(x, y); else chartCtx.lineTo(x, y);
+      }});
+      chartCtx.strokeStyle = color;
+      chartCtx.lineWidth = 2;
+      chartCtx.stroke();
+    }}
+
+    function drawChart() {{
+      const a = DATA.agents[selected];
+      const storageFrames = DATA.storage_by_norm[scenario.value];
+      const storage = storageFrames.map(frame => frame[selected] / 100);
+      const demand = a.demand;
+      const generation = DATA.generation;
+      const maxY = Math.max(0.1, ...demand, ...generation, ...storage);
+
+      chartCtx.clearRect(0, 0, chart.width, chart.height);
+      chartCtx.fillStyle = "white";
+      chartCtx.fillRect(0, 0, chart.width, chart.height);
+      chartCtx.strokeStyle = "#cfd7c7";
+      chartCtx.strokeRect(48, 26, chart.width - 68, chart.height - 66);
+      chartCtx.fillStyle = "#42513d";
+      chartCtx.fillText("kWh", 12, 24);
+      chartCtx.fillText("hour 1", 48, chart.height - 18);
+      chartCtx.fillText("hour 720", chart.width - 88, chart.height - 18);
+      chartCtx.fillText(maxY.toFixed(2), 8, 34);
+      chartCtx.fillText("0", 28, chart.height - 40);
+
+      drawLine(generation, maxY, "#2f6fbb");
+      drawLine(demand, maxY, "#b4493f");
+      drawLine(storage, maxY, "#2f8f58");
+
+      meta.innerHTML = `
+        <strong>Building ${{a.id}}</strong><br>
+        grid row/col: ${{a.row}}, ${{a.col}}<br>
+        type: ${{a.building_type}}<br>
+        load profile: <code>${{a.profile_id}}</code><br>
+        PV area: ${{DATA.pv_area_m2}} m2, battery: ${{DATA.battery_capacity_kwh}} kWh<br>
+        demand range: ${{Math.min(...demand).toFixed(3)}} to ${{Math.max(...demand).toFixed(3)}} kWh
+      `;
+      drawGrid();
+    }}
+
+    gridCanvas.addEventListener("mousemove", event => {{
+      const rect = gridCanvas.getBoundingClientRect();
+      const x = (event.clientX - rect.left) * gridCanvas.width / rect.width;
+      const y = (event.clientY - rect.top) * gridCanvas.height / rect.height;
+      const col = Math.min(grid - 1, Math.max(0, Math.floor(x / cell)));
+      const row = Math.min(grid - 1, Math.max(0, Math.floor(y / cell)));
+      selected = row * grid + col;
+      drawChart();
+    }});
+    scenario.onchange = drawChart;
+    drawGrid();
+    drawChart();
+  </script>
+</body>
+</html>
+""",
+        encoding="utf-8",
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--norm", type=float, choices=[0.0, 1.0], help="Run only one norm scenario.")
@@ -427,17 +595,20 @@ def main() -> None:
     scenarios = [requested_norm] if requested_norm is not None else [0.0, 1.0]
     summaries = []
     frames_by_norm = {}
+    storage_by_norm = {}
 
     for norm in scenarios:
         scenario_dir = outputs / f"norm_{int(norm)}"
-        summary, frames = run_scenario(input_path, scenario_dir, norm)
+        summary, frames, storage_frames = run_scenario(input_path, scenario_dir, norm)
         summaries.append(summary)
         frames_by_norm[f"norm_{int(norm)}"] = frames
+        storage_by_norm[f"norm_{int(norm)}"] = storage_frames
 
     if len(summaries) == 2:
         write_csv(outputs / "comparison.csv", summaries)
         write_report(outputs / "report.html", summaries, outputs)
         write_animation(outputs / "animation.html", summaries, frames_by_norm)
+        write_agent_grid(outputs / "agent_grid.html", input_path, summaries, storage_by_norm)
 
     for summary in summaries:
         print(

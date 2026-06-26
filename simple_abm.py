@@ -13,6 +13,8 @@ from pathlib import Path
 SIM_START = datetime(2025, 1, 1, 0)
 SIM_HOURS = 24 * 30
 NO_SUN_DAY = 15
+DEAD_HOURS_UNTIL_PERMANENT = 24
+CRITICAL_HEALTH = 0.05
 
 
 @dataclass(eq=False)
@@ -27,11 +29,18 @@ class Agent:
     generation: float = 0.0
     health: float = 1.0
     alive_hours: int = 0
+    critical_hours: int = 0
     health_sum: float = 0.0
+    dead_streak: int = 0
+    permanently_dead: bool = False
 
     @property
     def alive_percent(self) -> float:
         return 100.0 * self.alive_hours / SIM_HOURS
+
+    @property
+    def critical_percent(self) -> float:
+        return 100.0 * self.critical_hours / SIM_HOURS
 
     @property
     def resilience(self) -> float:
@@ -94,6 +103,11 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str
         hour_edges = []
 
         for a in agents:
+            if a.permanently_dead:
+                a.generation = 0.0
+                a.storage = 0.0
+                storage_start[a] = 0.0
+                continue
             d = a.demand[t]
             g = sun[t] * pv_area_m2 * pv_generation_scale
             storage_start[a] = a.storage
@@ -122,24 +136,42 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str
             donor.storage = min(left, battery_capacity_kwh)
 
         alive_count = 0
+        critical_count = 0
         health_sum = 0.0
         frame = []
         for a in agents:
-            if a.demand[t] > 0:
+            if a.permanently_dead:
+                a.health = 0.0
+            elif a.demand[t] > 0:
                 a.health = max(0.0, min(1.0, (a.generation + storage_start[a] + imports[a] - exports[a]) / a.demand[t]))
             else:
                 a.health = 1.0
+
+            if not a.permanently_dead:
+                if a.health <= 0.0:
+                    a.dead_streak += 1
+                    if a.dead_streak >= DEAD_HOURS_UNTIL_PERMANENT:
+                        a.permanently_dead = True
+                        a.health = 0.0
+                else:
+                    a.dead_streak = 0
+
             a.health_sum += a.health
             health_sum += a.health
-            frame.append(int(round(a.health * 100)))
+            frame.append(-1 if a.permanently_dead else int(round(a.health * 100)))
             if a.health > 0:
                 alive_count += 1
                 a.alive_hours += 1
+                if a.health < CRITICAL_HEALTH:
+                    critical_count += 1
+                    a.critical_hours += 1
 
         frames.append(frame)
         storage_frames.append([int(round(a.storage * 100)) for a in agents])
         share_edges.append(hour_edges)
         alive_percent = 100.0 * alive_count / len(agents)
+        critical_percent = 100.0 * critical_count / len(agents)
+        permadead_percent = 100.0 * sum(1 for a in agents if a.permanently_dead) / len(agents)
         q_t = health_sum / len(agents)
         resilience_so_far = sum(row["q_t"] for row in hourly + [{"q_t": q_t}]) / (t + 1)
         current_time = SIM_START + timedelta(hours=t)
@@ -148,6 +180,8 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str
                 "hour": t + 1,
                 "time": current_time.strftime("%Y-%m-%d %H:%M"),
                 "alive_percent": round(alive_percent, 4),
+                "critical_percent": round(critical_percent, 4),
+                "permadead_percent": round(permadead_percent, 4),
                 "q_t": round(q_t, 6),
                 "resilience": round(resilience_so_far, 6),
             }
@@ -162,7 +196,8 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str
                     "day": day,
                     "date": date,
                     "alive_percent": round(sum(row["alive_percent"] for row in hourly[-24:]) / 24.0, 4),
-                    "q_t": round(day_alive_area / 24.0, 6),
+                    "critical_percent": round(sum(row["critical_percent"] for row in hourly[-24:]) / 24.0, 4),
+                    "permadead_percent": round(hourly[-1]["permadead_percent"], 4),
                     "resilience": round(day_alive_area / 24.0, 6),
                 }
             )
@@ -177,8 +212,6 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str
         "pv_area_m2": pv_area_m2,
         "pv_generation_scale": pv_generation_scale,
         "battery_capacity_kwh": battery_capacity_kwh,
-        "solar_generation_rule": config.get("solar_generation_rule", "generation_i(t) = solar_kwh_per_m2(t) * pv_area_m2 * pv_generation_scale"),
-        "storage_rule": config.get("storage_rule", "storage_i(t) is capped at battery_capacity_kwh."),
         "agents": len(agents),
         "grid": f'{config["grid"]}x{config["grid"]}',
         "simulation_start": SIM_START.strftime("%Y-%m-%d %H:%M"),
@@ -187,7 +220,11 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str
         "simulated_days": SIM_HOURS // 24,
         "no_sun_day": NO_SUN_DAY,
         "no_sun_date": (SIM_START + timedelta(days=NO_SUN_DAY - 1)).strftime("%Y-%m-%d"),
+        "dead_hours_until_permanent": DEAD_HOURS_UNTIL_PERMANENT,
+        "critical_health_threshold": CRITICAL_HEALTH,
         "alive_percent": round(sum(row["alive_percent"] for row in hourly) / len(hourly), 4),
+        "critical_percent": round(sum(row["critical_percent"] for row in hourly) / len(hourly), 4),
+        "permadead_percent_final": round(hourly[-1]["permadead_percent"], 4),
         "resilience": round(sum(row["q_t"] for row in hourly) / len(hourly), 6),
         "runtime_seconds": round(time.perf_counter() - start, 3),
     }
@@ -211,6 +248,8 @@ def write_outputs(
             "building_type": a.building_type,
             "norm": round(a.norm, 4),
             "alive_percent": round(a.alive_percent, 4),
+            "critical_percent": round(a.critical_percent, 4),
+            "permanently_dead": a.permanently_dead,
             "resilience": round(a.resilience, 6),
         }
         for a in agents
@@ -224,9 +263,9 @@ def write_outputs(
                 "summary": summary,
                 "data_structure": {
                     "agent_definition": ["building_type", "norm", "generation_i(t)", "demand_i(t)", "storage_i(t)", "health_i(t)"],
-                    "building_performance_metrics": ["alive_percent", "resilience"],
-                    "hourly_metrics": ["alive_percent", "q_t", "resilience"],
-                    "daily_metrics": ["alive_percent", "q_t", "resilience"],
+                    "building_performance_metrics": ["alive_percent", "critical_percent", "permanently_dead", "resilience"],
+                    "hourly_metrics": ["alive_percent", "critical_percent", "permadead_percent", "q_t", "resilience"],
+                    "daily_metrics": ["alive_percent", "critical_percent", "permadead_percent", "resilience"],
                 },
                 "agents": agent_rows,
                 "hourly_metrics": hourly,
@@ -246,6 +285,8 @@ def write_report(path: Path, summaries: list[dict[str, object]], base_out: Path)
         f"<td>{html.escape(str(s['simulation_end']))}</td>"
         f"<td>{html.escape(str(s['no_sun_date']))}</td>"
         f"<td>{float(s['alive_percent']):.2f}%</td>"
+        f"<td>{float(s['critical_percent']):.2f}%</td>"
+        f"<td>{float(s['permadead_percent_final']):.2f}%</td>"
         f"<td>{float(s['resilience']):.4f}</td>"
         "</tr>"
         for s in summaries
@@ -279,11 +320,11 @@ def write_report(path: Path, summaries: list[dict[str, object]], base_out: Path)
   <p>Load profile source: local SF residential rows from <code>energy_profiles_hourly_used.csv</code>, joined to residential buildings in <code>building_energy_metadata.csv</code> by <code>profile_id</code>. The GitHub repo stores the compact prepared version in <code>data/agents_initial.json</code>.</p>
   <p>Solar generation potential source: cached NASA POWER 2025 hourly <code>ALLSKY_SFC_SW_DWN</code> for San Francisco. Each hourly value is converted from W/m2 to kWh/m2 by dividing by 1000. Generation uses the same fixed PV area and the same global scaling factor for every grid cell: <code>generation_i(t) = solar_kwh_per_m2(t) * 1.0 m2 * 5.0</code>.</p>
   <p>Battery/storage size is fixed for every building: <code>battery_capacity_i = 5.0 kWh</code>. <code>storage_i(t)</code> carries unused surplus energy forward and is capped at 5.0 kWh.</p>
-  <p>Building health is continuous: <code>health_i(t) = clip((generation + starting_storage + energy_received - energy_exported) / demand, 0, 1)</code>. A building is dead only when <code>health_i(t) = 0</code>.</p>
+  <p>Building health is continuous: <code>health_i(t) = clip((generation + starting_storage + energy_received - energy_exported) / demand, 0, 1)</code>. A building is dead at hour <code>t</code> when <code>health_i(t) = 0</code>, and is <strong>critical</strong> when <code>0 &lt; health_i(t) &lt; 0.05</code>. If a building stays dead for <strong>24 consecutive hours</strong> it is <strong>permanently dead</strong>: from then on its health is fixed at 0 and it never revives, generates, or shares.</p>
   <p>Energy sharing rule: <code>gift = min(surplus, energy_request) * norm_donor</code>. The two scenarios set every residential building's <code>norm_i</code> to 0 or 1.</p>
-  <p>Only two performance metrics are reported: <strong>% building alive</strong> and <strong>resilience</strong>. Here <code>Q(t)</code> is system performance, defined as the average building health: <code>Q(t) = mean_i health_i(t)</code>. Resilience is normalized area under that curve: <code>R = integral Q(t) dt / integral Q0 dt</code>, where <code>Q0 = 1</code>.</p>
+  <p>Performance metrics: <strong>% building alive</strong> (<code>health &gt; 0</code>), <strong>% critical</strong> (<code>health &lt; 5%</code>), <strong>% permanently dead</strong>, and <strong>resilience</strong>. Here <code>Q(t)</code> is system performance, defined as the average building health: <code>Q(t) = mean_i health_i(t)</code>. Resilience is normalized area under that curve: <code>R = integral Q(t) dt / integral Q0 dt</code>, where <code>Q0 = 1</code>.</p>
   <table>
-    <thead><tr><th>Norm</th><th>Start</th><th>End</th><th>No-sun date</th><th>% Building Alive</th><th>Resilience</th></tr></thead>
+    <thead><tr><th>Norm</th><th>Start</th><th>End</th><th>No-sun date</th><th>% Building Alive</th><th>% Critical</th><th>% Perma-dead</th><th>Resilience</th></tr></thead>
     <tbody>{rows}</tbody>
   </table>
   <h2>Files</h2>
@@ -316,61 +357,81 @@ def write_animation(
   <title>Simple ABM Health Animation</title>
   <style>
     body {{ font-family: Arial, sans-serif; margin: 28px; color: #17202a; background: #f7f8f4; }}
-    main {{ display: grid; grid-template-columns: minmax(360px, 620px) minmax(260px, 1fr); gap: 24px; align-items: start; }}
-    canvas {{ width: 100%; max-width: 620px; aspect-ratio: 1; background: white; border: 1px solid #cfd7c7; }}
-    button, select, input {{ font: inherit; }}
-    button {{ padding: 7px 12px; border: 1px solid #9aa78d; background: white; border-radius: 4px; cursor: pointer; }}
-    .controls {{ display: grid; gap: 12px; }}
-    .row {{ display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }}
-    input[type="range"] {{ width: min(620px, 100%); }}
+    h1 {{ margin-bottom: 4px; }}
+    p.lead {{ margin-top: 4px; max-width: 920px; }}
+    .controls {{ display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 16px 0; padding: 12px 14px; background: white; border: 1px solid #cfd7c7; border-radius: 6px; }}
+    .controls button {{ padding: 7px 14px; border: 1px solid #9aa78d; background: #f3f6ee; border-radius: 4px; cursor: pointer; font: inherit; }}
+    .controls button:hover {{ background: #e7ebdf; }}
+    input[type="range"] {{ flex: 1 1 320px; min-width: 220px; }}
+    #clock {{ font-variant-numeric: tabular-nums; font-weight: bold; min-width: 230px; }}
+    .panels {{ display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 24px; align-items: start; }}
+    .panel {{ background: white; border: 1px solid #cfd7c7; border-radius: 6px; padding: 14px; }}
+    .panel h2 {{ margin: 0 0 8px; font-size: 17px; }}
+    canvas {{ width: 100%; aspect-ratio: 1; background: #11150f; border: 1px solid #cfd7c7; display: block; }}
+    .stat {{ margin-top: 10px; font-variant-numeric: tabular-nums; }}
+    .legend {{ margin-top: 16px; display: flex; gap: 18px; flex-wrap: wrap; }}
     .swatch {{ display: inline-block; width: 14px; height: 14px; vertical-align: -2px; margin-right: 5px; border: 1px solid #888; }}
     code {{ background: #eef1e8; padding: 2px 4px; border-radius: 4px; }}
   </style>
 </head>
 <body>
   <h1>Building Health Animation</h1>
-  <p>Each square is one residential building in the 36 x 36 grid. Color shows <code>health_i(t)</code>: red is 0, green is 1. Yellow edges show energy sharing in the current hour.</p>
-  <main>
-    <section>
-      <canvas id="grid" width="720" height="720"></canvas>
-      <input id="frameSlider" type="range" min="0" max="719" value="0">
-    </section>
-    <section class="controls">
-      <div class="row">
-        <button id="play">Play</button>
-        <button id="pause">Pause</button>
-        <button id="step">Step</button>
-      </div>
-      <label>Scenario
-        <select id="scenario">
-          <option value="norm_0">norm = 0</option>
-          <option value="norm_1">norm = 1</option>
-        </select>
-      </label>
-      <div id="status"></div>
-      <div><span class="swatch" style="background:#8b1e1e"></span>health = 0</div>
-      <div><span class="swatch" style="background:#2f8f58"></span>health = 1</div>
-      <div><span class="swatch" style="background:#f2c94c"></span>energy sharing edge</div>
-      <p><code>Q(t) = mean_i health_i(t)</code>. Resilience is the average of Q(t) over the simulation.</p>
-    </section>
-  </main>
+  <p class="lead">Each square is one residential building in the 36 x 36 grid. Color shows <code>health_i(t)</code> as a 5-band heatmap from deep red (0&ndash;20%) through green (80&ndash;100%). A cell is <strong>black</strong> once a building has been dead for 24 hours and is permanently dead (it never revives). <strong>Grey</strong> edges mark donor&ndash;recipient pairs that have shared at any earlier hour; <strong>red</strong> edges show sharing in the current hour. One time slider drives both scenarios so they stay in sync.</p>
+  <div class="controls">
+    <button id="play">Play</button>
+    <button id="pause">Pause</button>
+    <button id="step">Step</button>
+    <input id="frameSlider" type="range" min="0" max="719" value="0">
+    <span id="clock"></span>
+  </div>
+  <div class="panels">
+    <div class="panel">
+      <h2>norm = 0 &middot; no sharing</h2>
+      <canvas id="grid_norm_0" width="720" height="720"></canvas>
+      <div class="stat" id="stat_norm_0"></div>
+    </div>
+    <div class="panel">
+      <h2>norm = 1 &middot; full sharing</h2>
+      <canvas id="grid_norm_1" width="720" height="720"></canvas>
+      <div class="stat" id="stat_norm_1"></div>
+    </div>
+  </div>
+  <div class="legend">
+    <div><strong>health:</strong></div>
+    <div><span class="swatch" style="background:#d73027"></span>0&ndash;20%</div>
+    <div><span class="swatch" style="background:#fc8d59"></span>20&ndash;40%</div>
+    <div><span class="swatch" style="background:#fee08b"></span>40&ndash;60%</div>
+    <div><span class="swatch" style="background:#91cf60"></span>60&ndash;80%</div>
+    <div><span class="swatch" style="background:#1a9850"></span>80&ndash;100%</div>
+    <div><span class="swatch" style="background:#000000"></span>permanently dead (24 h)</div>
+    <div><span class="swatch" style="background:#969696"></span>has shared earlier</div>
+    <div><span class="swatch" style="background:#e03131"></span>sharing now</div>
+  </div>
   <script>
     const DATA = {json.dumps(payload, separators=(",", ":"))};
-    const canvas = document.getElementById("grid");
-    const ctx = canvas.getContext("2d");
-    const slider = document.getElementById("frameSlider");
-    const scenario = document.getElementById("scenario");
-    const statusEl = document.getElementById("status");
+    const SCENARIOS = ["norm_0", "norm_1"];
     const grid = DATA.grid;
-    const cell = canvas.width / grid;
+    const slider = document.getElementById("frameSlider");
+    const clock = document.getElementById("clock");
+    const views = SCENARIOS.map(key => {{
+      const canvas = document.getElementById("grid_" + key);
+      return {{ key, canvas, ctx: canvas.getContext("2d"), stat: document.getElementById("stat_" + key), cell: canvas.width / grid }};
+    }});
     let timer = null;
 
+    // 5-band heatmap for health 0-100 (red = low, green = high); black = permanently dead.
+    const HEAT = [
+      {{ max: 20, color: "#d73027" }},   //  0-20  deep red
+      {{ max: 40, color: "#fc8d59" }},   // 20-40  orange
+      {{ max: 60, color: "#fee08b" }},   // 40-60  yellow
+      {{ max: 80, color: "#91cf60" }},   // 60-80  light green
+      {{ max: 101, color: "#1a9850" }},  // 80-100 green
+    ];
+
     function color(value) {{
-      const h = Math.max(0, Math.min(100, value)) / 100;
-      const r = Math.round(139 * (1 - h) + 47 * h);
-      const g = Math.round(30 * (1 - h) + 143 * h);
-      const b = Math.round(30 * (1 - h) + 88 * h);
-      return `rgb(${{r}},${{g}},${{b}})`;
+      if (value < 0) return "#000000";   // permanently dead (24 h dead)
+      for (const band of HEAT) if (value < band.max) return band.color;
+      return "#1a9850";
     }}
 
     function frameTime(index) {{
@@ -379,45 +440,65 @@ def write_animation(
       return d.toISOString().slice(0, 16).replace("T", " ");
     }}
 
-    function draw() {{
-      const key = scenario.value;
-      const i = Number(slider.value);
-      const frame = DATA.frames_by_norm[key][i];
-      let q = 0;
+    function drawEdge(ctx, cell, from, to) {{
+      const fr = Math.floor(from / grid), fc = from % grid;
+      const tr = Math.floor(to / grid), tc = to % grid;
+      ctx.beginPath();
+      ctx.moveTo((fc + 0.5) * cell, (fr + 0.5) * cell);
+      ctx.lineTo((tc + 0.5) * cell, (tr + 0.5) * cell);
+      ctx.stroke();
+    }}
+
+    function drawView(view, i) {{
+      const ctx = view.ctx, cell = view.cell, N = grid * grid;
+      const frame = DATA.frames_by_norm[view.key][i];
+      let q = 0, alive = 0, critical = 0, perma = 0;
       for (let r = 0; r < grid; r++) {{
         for (let c = 0; c < grid; c++) {{
           const v = frame[r * grid + c];
-          q += v / 100;
+          q += (v < 0 ? 0 : v) / 100;
+          if (v < 0) perma++;
+          else if (v > 0 && v < 5) critical++;
+          if (v > 0) alive++;
           ctx.fillStyle = color(v);
           ctx.fillRect(c * cell, r * cell, cell, cell);
         }}
       }}
-      ctx.strokeStyle = "rgba(242,201,76,0.85)";
-      ctx.lineWidth = 2;
-      for (const [from, to] of DATA.edges_by_norm[key][i]) {{
-        const fromRow = Math.floor(from / grid), fromCol = from % grid;
-        const toRow = Math.floor(to / grid), toCol = to % grid;
-        ctx.beginPath();
-        ctx.moveTo((fromCol + 0.5) * cell, (fromRow + 0.5) * cell);
-        ctx.lineTo((toCol + 0.5) * cell, (toRow + 0.5) * cell);
-        ctx.stroke();
-      }}
-      ctx.strokeStyle = "rgba(255,255,255,0.25)";
+      ctx.strokeStyle = "rgba(255,255,255,0.12)";
       ctx.lineWidth = 1;
-      for (let i = 0; i <= grid; i++) {{
-        ctx.beginPath(); ctx.moveTo(i * cell, 0); ctx.lineTo(i * cell, canvas.height); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(0, i * cell); ctx.lineTo(canvas.width, i * cell); ctx.stroke();
+      for (let k = 0; k <= grid; k++) {{
+        ctx.beginPath(); ctx.moveTo(k * cell, 0); ctx.lineTo(k * cell, view.canvas.height); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, k * cell); ctx.lineTo(view.canvas.width, k * cell); ctx.stroke();
       }}
+      // grey edges: every donor->requester pair that has shared at any hour up to now
+      if (view.cum === undefined || i < view.cumUpto) {{ view.cum = new Set(); view.cumUpto = -1; }}
+      for (let t = view.cumUpto + 1; t <= i; t++) {{
+        for (const [from, to] of DATA.edges_by_norm[view.key][t]) view.cum.add(from * N + to);
+      }}
+      view.cumUpto = i;
+      ctx.strokeStyle = "rgba(150,150,150,0.4)";
+      ctx.lineWidth = 1.5;
+      for (const key of view.cum) drawEdge(ctx, cell, Math.floor(key / N), key % N);
+      // red edges: sharing active in the current hour
+      ctx.strokeStyle = "rgba(224,49,49,0.9)";
+      ctx.lineWidth = 2.5;
+      for (const [from, to] of DATA.edges_by_norm[view.key][i]) drawEdge(ctx, cell, from, to);
+
       q = q / frame.length;
-      const alive = frame.filter(v => v > 0).length / frame.length * 100;
-      const edgeCount = DATA.edges_by_norm[key][i].length;
-      statusEl.textContent = `Hour ${{i + 1}} / 720 | ${{frameTime(i)}} | alive ${{alive.toFixed(1)}}% | Q(t) ${{q.toFixed(3)}} | sharing edges ${{edgeCount}}`;
+      const edgeCount = DATA.edges_by_norm[view.key][i].length;
+      view.stat.innerHTML = `alive <strong>${{(alive / frame.length * 100).toFixed(1)}}%</strong> &middot; critical <strong>${{(critical / frame.length * 100).toFixed(1)}}%</strong> &middot; perma-dead <strong>${{(perma / frame.length * 100).toFixed(1)}}%</strong> &middot; Q(t) <strong>${{q.toFixed(3)}}</strong> &middot; sharing now ${{edgeCount}}`;
+    }}
+
+    function draw() {{
+      const i = Number(slider.value);
+      clock.textContent = `Hour ${{i + 1}} / 720  |  ${{frameTime(i)}}`;
+      for (const view of views) drawView(view, i);
     }}
 
     function play() {{
       if (timer) return;
       timer = setInterval(() => {{
-        slider.value = (Number(slider.value) + 1) % DATA.frames_by_norm[scenario.value].length;
+        slider.value = (Number(slider.value) + 1) % 720;
         draw();
       }}, 90);
     }}
@@ -429,9 +510,8 @@ def write_animation(
 
     document.getElementById("play").onclick = play;
     document.getElementById("pause").onclick = pause;
-    document.getElementById("step").onclick = () => {{ slider.value = (Number(slider.value) + 1) % 720; draw(); }};
+    document.getElementById("step").onclick = () => {{ pause(); slider.value = (Number(slider.value) + 1) % 720; draw(); }};
     slider.oninput = draw;
-    scenario.onchange = draw;
     draw();
   </script>
 </body>
@@ -612,13 +692,12 @@ def write_agent_grid(path: Path, input_path: Path, summaries: list[dict[str, obj
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--norm", type=float, choices=[0.0, 1.0], help="Run only one norm scenario.")
-    parser.add_argument("--generosity", type=float, choices=[0.0, 1.0], help="Backward-compatible alias for --norm.")
     args = parser.parse_args()
 
     base = Path(__file__).resolve().parent
     input_path = base / "data" / "agents_initial.json"
     outputs = base / "outputs"
-    requested_norm = args.norm if args.norm is not None else args.generosity
+    requested_norm = args.norm
     scenarios = [requested_norm] if requested_norm is not None else [0.0, 1.0]
     summaries = []
     frames_by_norm = {}

@@ -143,23 +143,35 @@ Each building has its own health value:
 
 `health_i(t) = clip((generation + starting_storage + energy_received - energy_exported) / demand, 0, 1)`
 
-A building is dead only when:
+Building states:
 
-`health_i(t) = 0`
+- `alive`: `health_i(t) > 0`
+- `dead` (this hour): `health_i(t) = 0`
+- `critical`: `0 < health_i(t) < 0.05` (health below 5%)
 
-A building is alive when:
+### Permanent Death
 
-`health_i(t) > 0`
+If a building stays dead for **24 consecutive hours** it becomes **permanently
+dead**. From then on its health is fixed at `0` for the rest of the simulation:
+it never revives, and it no longer generates, stores, or shares energy. The
+consecutive-dead-hour counter resets to `0` on any hour the building is alive.
 
 ## Building Performance Metrics
-
-Only two metrics are reported.
 
 1. `% building alive`
 
 The percent of buildings with `health_i(t) > 0` over the evaluated time window.
 
-2. `resilience`
+2. `% critical`
+
+The percent of buildings with `0 < health_i(t) < 0.05`.
+
+3. `% permanently dead`
+
+The percent of buildings that have been permanently dead (dead for 24
+consecutive hours) by the end of the window.
+
+4. `resilience`
 
 Resilience is normalized to `[0, 1]` as the area under the system performance curve:
 
@@ -179,7 +191,7 @@ So resilience is the average system health over time.
 - `data/agents_initial.json`: compact prepared agent and solar input. Each agent includes `id`, `row`, `col`, `building_type`, initial `norm`, `profile_id`, and the full 720-hour `demand` load profile.
 - `data/agents_initial_summary.csv`: easier-to-read per-agent initial summary with `profile_id`, PV size, PV scale, battery size, and demand summary statistics.
 - `outputs/report.html`: comparison report for both norm versions.
-- `outputs/animation.html`: animated 36 x 36 grid of building health over time; yellow edges show energy sharing between buildings.
+- `outputs/animation.html`: building health over time, with `norm = 0` (no sharing) and `norm = 1` (full sharing) shown side by side. A single time slider (plus play/pause/step) drives both 36 x 36 grids in sync. Cells turn orange when critical (health < 5%) and black once permanently dead. Grey edges mark donor-recipient pairs that have shared at any earlier hour; red edges show sharing in the current hour.
 - `outputs/agent_grid.html`: hoverable 36 x 36 grid; each building shows generation, demand, and storage curves.
 - `outputs/comparison.csv`: scenario-level metrics.
 - `outputs/norm_0/`: outputs for no sharing.

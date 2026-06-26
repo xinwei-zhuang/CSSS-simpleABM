@@ -16,13 +16,13 @@
   <h1>Simple SF Energy Sharing ABM</h1>
   <p>Simulation time is explicitly <strong>2025-01-01 00:00 through 2025-01-30 23:00</strong>, with no-sun disturbance on <strong>2025-01-15</strong>.</p>
   <p>Agent state: <code>A_i(t) = {health_i(t), generation_i(t), demand_i(t), storage_i(t), generosity}</code>.</p>
-  <p>Healthy balance: <code>(generation + starting_storage - demand) + (energy_received - energy_exported)</code>. A building is alive when this value is at least 0.</p>
+  <p>Building health is continuous: <code>health_i(t) = clip((generation + starting_storage + energy_received - energy_exported) / demand, 0, 1)</code>. A building is dead only when <code>health_i(t) = 0</code>.</p>
   <p>Energy sharing rule: <code>gift = min(surplus, energy_request) * generosity</code>.</p>
-  <p>Only two performance metrics are reported: <strong>% building alive</strong> and <strong>resilience</strong>. Resilience is normalized area under the performance curve: <code>R = integral Q(t) dt / integral Q0 dt</code>, where <code>Q(t) = % building alive</code> and <code>Q0 = 100%</code>.</p>
+  <p>Only two performance metrics are reported: <strong>% building alive</strong> and <strong>resilience</strong>. Here <code>Q(t)</code> is system performance, defined as the average building health: <code>Q(t) = mean_i health_i(t)</code>. Resilience is normalized area under that curve: <code>R = integral Q(t) dt / integral Q0 dt</code>, where <code>Q0 = 1</code>.</p>
   <table>
     <thead><tr><th>Generosity</th><th>Start</th><th>End</th><th>No-sun date</th><th>% Building Alive</th><th>Resilience</th></tr></thead>
-    <tbody><tr><td>0.0</td><td>2025-01-01 00:00</td><td>2025-01-30 23:00</td><td>2025-01-15</td><td>80.64%</td><td>0.8064</td></tr>
-<tr><td>1.0</td><td>2025-01-01 00:00</td><td>2025-01-30 23:00</td><td>2025-01-15</td><td>81.74%</td><td>0.8174</td></tr></tbody>
+    <tbody><tr><td>0.0</td><td>2025-01-01 00:00</td><td>2025-01-30 23:00</td><td>2025-01-15</td><td>86.23%</td><td>0.8309</td></tr>
+<tr><td>1.0</td><td>2025-01-01 00:00</td><td>2025-01-30 23:00</td><td>2025-01-15</td><td>85.84%</td><td>0.8333</td></tr></tbody>
   </table>
   <h2>Files</h2>
   <ul><li>generosity = 0.0: <a href="generosity_0/daily_metrics.csv">daily metrics</a>, <a href="generosity_0/hourly_metrics.csv">hourly metrics</a>, <a href="generosity_0/agents_final.csv">building metrics</a></li>

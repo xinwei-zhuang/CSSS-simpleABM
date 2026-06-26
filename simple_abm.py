@@ -23,7 +23,9 @@ class Agent:
     demand: list[float]
     storage: float = 0.0
     generation: float = 0.0
+    health: float = 1.0
     alive_hours: int = 0
+    health_sum: float = 0.0
 
     @property
     def alive_percent(self) -> float:
@@ -31,7 +33,7 @@ class Agent:
 
     @property
     def resilience(self) -> float:
-        return self.alive_hours / SIM_HOURS
+        return self.health_sum / SIM_HOURS
 
 
 def load_input(path: Path) -> tuple[list[Agent], list[float], dict[str, object]]:
@@ -105,24 +107,32 @@ def run_scenario(input_path: Path, out_dir: Path, generosity: float) -> dict[str
             donor.storage = left
 
         alive_count = 0
+        health_sum = 0.0
         for a in agents:
-            healthy = (a.generation + storage_start[a] - a.demand[t]) + (imports[a] - exports[a])
-            if healthy >= -1e-9:
+            if a.demand[t] > 0:
+                a.health = max(0.0, min(1.0, (a.generation + storage_start[a] + imports[a] - exports[a]) / a.demand[t]))
+            else:
+                a.health = 1.0
+            a.health_sum += a.health
+            health_sum += a.health
+            if a.health > 0:
                 alive_count += 1
                 a.alive_hours += 1
 
         alive_percent = 100.0 * alive_count / len(agents)
-        resilience_so_far = sum(row["alive_percent"] / 100.0 for row in hourly + [{"alive_percent": alive_percent}]) / (t + 1)
+        q_t = health_sum / len(agents)
+        resilience_so_far = sum(row["q_t"] for row in hourly + [{"q_t": q_t}]) / (t + 1)
         current_time = SIM_START + timedelta(hours=t)
         hourly.append(
             {
                 "hour": t + 1,
                 "time": current_time.strftime("%Y-%m-%d %H:%M"),
                 "alive_percent": round(alive_percent, 4),
+                "q_t": round(q_t, 6),
                 "resilience": round(resilience_so_far, 6),
             }
         )
-        day_alive_area += alive_percent / 100.0
+        day_alive_area += q_t
 
         if (t + 1) % 24 == 0:
             day = (t + 1) // 24
@@ -131,7 +141,8 @@ def run_scenario(input_path: Path, out_dir: Path, generosity: float) -> dict[str
                 {
                     "day": day,
                     "date": date,
-                    "alive_percent": round(day_alive_area / 24.0 * 100.0, 4),
+                    "alive_percent": round(sum(row["alive_percent"] for row in hourly[-24:]) / 24.0, 4),
+                    "q_t": round(day_alive_area / 24.0, 6),
                     "resilience": round(day_alive_area / 24.0, 6),
                 }
             )
@@ -148,7 +159,7 @@ def run_scenario(input_path: Path, out_dir: Path, generosity: float) -> dict[str
         "no_sun_day": NO_SUN_DAY,
         "no_sun_date": (SIM_START + timedelta(days=NO_SUN_DAY - 1)).strftime("%Y-%m-%d"),
         "alive_percent": round(sum(row["alive_percent"] for row in hourly) / len(hourly), 4),
-        "resilience": round(sum(row["alive_percent"] / 100.0 for row in hourly) / len(hourly), 6),
+        "resilience": round(sum(row["q_t"] for row in hourly) / len(hourly), 6),
         "runtime_seconds": round(time.perf_counter() - start, 3),
     }
     write_outputs(out_dir, agents, hourly, daily, summary)
@@ -183,8 +194,8 @@ def write_outputs(
                 "data_structure": {
                     "agent_state": ["health_i", "generation_i", "demand_i", "storage_i", "generosity"],
                     "building_performance_metrics": ["alive_percent", "resilience"],
-                    "hourly_metrics": ["alive_percent", "resilience"],
-                    "daily_metrics": ["alive_percent", "resilience"],
+                    "hourly_metrics": ["alive_percent", "q_t", "resilience"],
+                    "daily_metrics": ["alive_percent", "q_t", "resilience"],
                 },
                 "agents": agent_rows,
                 "hourly_metrics": hourly,
@@ -234,9 +245,9 @@ def write_report(path: Path, summaries: list[dict[str, object]], base_out: Path)
   <h1>Simple SF Energy Sharing ABM</h1>
   <p>Simulation time is explicitly <strong>2025-01-01 00:00 through 2025-01-30 23:00</strong>, with no-sun disturbance on <strong>2025-01-15</strong>.</p>
   <p>Agent state: <code>A_i(t) = {{health_i(t), generation_i(t), demand_i(t), storage_i(t), generosity}}</code>.</p>
-  <p>Healthy balance: <code>(generation + starting_storage - demand) + (energy_received - energy_exported)</code>. A building is alive when this value is at least 0.</p>
+  <p>Building health is continuous: <code>health_i(t) = clip((generation + starting_storage + energy_received - energy_exported) / demand, 0, 1)</code>. A building is dead only when <code>health_i(t) = 0</code>.</p>
   <p>Energy sharing rule: <code>gift = min(surplus, energy_request) * generosity</code>.</p>
-  <p>Only two performance metrics are reported: <strong>% building alive</strong> and <strong>resilience</strong>. Resilience is normalized area under the performance curve: <code>R = integral Q(t) dt / integral Q0 dt</code>, where <code>Q(t) = % building alive</code> and <code>Q0 = 100%</code>.</p>
+  <p>Only two performance metrics are reported: <strong>% building alive</strong> and <strong>resilience</strong>. Here <code>Q(t)</code> is system performance, defined as the average building health: <code>Q(t) = mean_i health_i(t)</code>. Resilience is normalized area under that curve: <code>R = integral Q(t) dt / integral Q0 dt</code>, where <code>Q0 = 1</code>.</p>
   <table>
     <thead><tr><th>Generosity</th><th>Start</th><th>End</th><th>No-sun date</th><th>% Building Alive</th><th>Resilience</th></tr></thead>
     <tbody>{rows}</tbody>

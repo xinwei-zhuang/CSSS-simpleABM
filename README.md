@@ -32,7 +32,7 @@ Each grid cell is one building agent:
 
 `A_i(t) = {health_i(t), generation_i(t), demand_i(t), storage_i(t), generosity}`
 
-- `health_i(t)`: whether the building has enough net energy at time `t`.
+- `health_i(t)`: building health at time `t`, normalized to `[0, 1]`.
 - `generation_i(t)`: solar generation for the hour.
 - `demand_i(t)`: hourly load sampled from the prepared SF building energy profiles.
 - `storage_i(t)`: unused surplus carried to the next hour.
@@ -60,13 +60,17 @@ Two versions are run:
 
 ## Healthy / Alive Rule
 
-Healthy balance follows:
+Each building has its own health value:
 
-`healthy = (generation + starting_storage - demand) + (energy_received - energy_exported)`
+`health_i(t) = clip((generation + starting_storage + energy_received - energy_exported) / demand, 0, 1)`
 
-A building is alive at time `t` when:
+A building is dead only when:
 
-`healthy >= 0`
+`health_i(t) = 0`
+
+A building is alive when:
+
+`health_i(t) > 0`
 
 ## Building Performance Metrics
 
@@ -74,20 +78,20 @@ Only two metrics are reported.
 
 1. `% building alive`
 
-The percent of buildings alive over the evaluated time window.
+The percent of buildings with `health_i(t) > 0` over the evaluated time window.
 
 2. `resilience`
 
-Resilience is normalized to `[0, 1]` as the area under the performance curve:
+Resilience is normalized to `[0, 1]` as the area under the system performance curve:
 
 `R = integral Q(t) dt / integral Q0 dt`
 
 where:
 
-- `Q(t) = % building alive`
-- `Q0 = 100% buildings alive`
+- `Q(t) = mean_i health_i(t)`
+- `Q0 = 1`
 
-Because `Q0 = 100%`, resilience is the average alive fraction over time.
+So resilience is the average system health over time.
 
 ## Files
 

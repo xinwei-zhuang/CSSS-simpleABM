@@ -305,7 +305,7 @@ def write_report(path: Path, summaries: list[dict[str, object]], base_out: Path)
   <meta charset="utf-8">
   <title>Simple SF Energy Sharing ABM</title>
   <style>
-    body {{ font-family: Arial, sans-serif; margin: 32px; color: #17202a; background: #f7f8f4; }}
+    body {{ font-family: Arial, sans-serif; margin: 32px auto; max-width: 900px; padding: 0 32px; color: #17202a; background: #f7f8f4; }}
     table {{ border-collapse: collapse; width: 100%; background: white; margin: 16px 0; }}
     th, td {{ border: 1px solid #d8ddd2; padding: 8px; text-align: right; }}
     th {{ background: #e7ebdf; }}
@@ -356,7 +356,7 @@ def write_animation(
   <meta charset="utf-8">
   <title>Simple ABM Health Animation</title>
   <style>
-    body {{ font-family: Arial, sans-serif; margin: 28px; color: #17202a; background: #f7f8f4; }}
+    body {{ font-family: Arial, sans-serif; margin: 32px auto; max-width: 1180px; padding: 0 32px; color: #17202a; background: #f7f8f4; }}
     h1 {{ margin-bottom: 4px; }}
     p.lead {{ margin-top: 4px; max-width: 920px; }}
     .controls {{ display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 16px 0; padding: 12px 14px; background: white; border: 1px solid #cfd7c7; border-radius: 6px; }}
@@ -558,7 +558,7 @@ def write_agent_grid(path: Path, input_path: Path, summaries: list[dict[str, obj
   <meta charset="utf-8">
   <title>Building Energy Curves</title>
   <style>
-    body {{ font-family: Arial, sans-serif; margin: 28px; color: #17202a; background: #f7f8f4; }}
+    body {{ font-family: Arial, sans-serif; margin: 32px auto; max-width: 1180px; padding: 0 32px; color: #17202a; background: #f7f8f4; }}
     main {{ display: grid; grid-template-columns: minmax(360px, 620px) minmax(340px, 1fr); gap: 24px; align-items: start; }}
     canvas {{ background: white; border: 1px solid #cfd7c7; }}
     #grid {{ width: 100%; max-width: 620px; aspect-ratio: 1; }}

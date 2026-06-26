@@ -22,7 +22,7 @@
     "critical_percent": 0.441,
     "permadead_percent_final": 93.6728,
     "resilience": 0.309354,
-    "runtime_seconds": 2.178
+    "runtime_seconds": 2.151
   },
   "data_structure": {
     "agent_definition": [

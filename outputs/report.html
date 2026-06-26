@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Simple SF Energy Sharing ABM</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 32px; color: #17202a; background: #f7f8f4; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 20px 0; }
+    .cards section { background: white; border: 1px solid #d8ddd2; border-radius: 6px; padding: 12px; }
+    .cards strong { display: block; color: #56624f; font-size: 12px; text-transform: uppercase; }
+    .cards span { display: block; margin-top: 6px; font-size: 22px; }
+    table { border-collapse: collapse; width: 100%; background: white; margin: 12px 0 24px; }
+    th, td { border: 1px solid #d8ddd2; padding: 7px 8px; text-align: right; }
+    th { background: #e7ebdf; }
+    .bar-row { display: grid; grid-template-columns: 64px 1fr 48px; gap: 8px; align-items: center; margin: 4px 0; }
+    .bar-row b { display: block; height: 14px; background: #5a8f7b; border-radius: 2px; }
+    code { background: #eef1e8; padding: 2px 4px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Simple SF Energy Sharing ABM</h1>
+  <p><code>A_i(t) = {health_i(t), generation_i(t), demand_i(t), storage_i(t), norm_i}</code>. The only behavioral parameter is <code>norm_i ~ Uniform(0, 1)</code>.</p>
+  <div class="cards">
+    <section><strong>Agents</strong><span>1296</span></section>
+    <section><strong>Hours</strong><span>720</span></section>
+    <section><strong>No Sun Day</strong><span>15</span></section>
+    <section><strong>Service Ratio</strong><span>0.372</span></section>
+    <section><strong>Shared Energy</strong><span>295303.5</span></section>
+    <section><strong>Runtime Seconds</strong><span>8.66</span></section>
+  </div>
+  <h2>Environment</h2>
+  <p>One building per cell on a 36 x 36 San Francisco grid. Simulation length is 30 days / 720 hourly steps, with day 15 set to no solar generation.</p>
+  <h2>Energy Sharing Rule</h2>
+  <p>After self-use and storage, deficit agents request energy from four direct neighbors. Donors give <code>min(surplus, energy_request) * norm_donor</code>.</p>
+  <h2>Daily Demand And Service Ratio</h2>
+  <div class="bar-row"><span>Day 01</span><b style="width:89.7%"></b><em>0.20</em></div>
+<div class="bar-row"><span>Day 02</span><b style="width:84.0%"></b><em>0.34</em></div>
+<div class="bar-row"><span>Day 03</span><b style="width:85.2%"></b><em>0.29</em></div>
+<div class="bar-row"><span>Day 04</span><b style="width:86.1%"></b><em>0.29</em></div>
+<div class="bar-row"><span>Day 05</span><b style="width:84.4%"></b><em>0.37</em></div>
+<div class="bar-row"><span>Day 06</span><b style="width:81.8%"></b><em>0.33</em></div>
+<div class="bar-row"><span>Day 07</span><b style="width:86.6%"></b><em>0.40</em></div>
+<div class="bar-row"><span>Day 08</span><b style="width:94.2%"></b><em>0.40</em></div>
+<div class="bar-row"><span>Day 09</span><b style="width:100.0%"></b><em>0.39</em></div>
+<div class="bar-row"><span>Day 10</span><b style="width:93.4%"></b><em>0.37</em></div>
+<div class="bar-row"><span>Day 11</span><b style="width:85.3%"></b><em>0.43</em></div>
+<div class="bar-row"><span>Day 12</span><b style="width:83.0%"></b><em>0.45</em></div>
+<div class="bar-row"><span>Day 13</span><b style="width:80.5%"></b><em>0.46</em></div>
+<div class="bar-row"><span>Day 14</span><b style="width:82.8%"></b><em>0.46</em></div>
+<div class="bar-row"><span>Day 15</span><b style="width:86.5%"></b><em>0.08</em></div>
+<div class="bar-row"><span>Day 16</span><b style="width:85.0%"></b><em>0.42</em></div>
+<div class="bar-row"><span>Day 17</span><b style="width:80.7%"></b><em>0.30</em></div>
+<div class="bar-row"><span>Day 18</span><b style="width:88.1%"></b><em>0.42</em></div>
+<div class="bar-row"><span>Day 19</span><b style="width:88.2%"></b><em>0.25</em></div>
+<div class="bar-row"><span>Day 20</span><b style="width:88.2%"></b><em>0.45</em></div>
+<div class="bar-row"><span>Day 21</span><b style="width:90.5%"></b><em>0.44</em></div>
+<div class="bar-row"><span>Day 22</span><b style="width:87.0%"></b><em>0.47</em></div>
+<div class="bar-row"><span>Day 23</span><b style="width:85.7%"></b><em>0.48</em></div>
+<div class="bar-row"><span>Day 24</span><b style="width:91.0%"></b><em>0.40</em></div>
+<div class="bar-row"><span>Day 25</span><b style="width:92.3%"></b><em>0.36</em></div>
+<div class="bar-row"><span>Day 26</span><b style="width:92.1%"></b><em>0.42</em></div>
+<div class="bar-row"><span>Day 27</span><b style="width:88.2%"></b><em>0.47</em></div>
+<div class="bar-row"><span>Day 28</span><b style="width:77.4%"></b><em>0.48</em></div>
+<div class="bar-row"><span>Day 29</span><b style="width:83.6%"></b><em>0.28</em></div>
+<div class="bar-row"><span>Day 30</span><b style="width:83.0%"></b><em>0.27</em></div>
+  <h2>Lowest Performing Buildings</h2>
+  <table><thead><tr><th>id</th><th>row</th><th>col</th><th>norm</th><th>service_ratio</th><th>total_demand</th><th>total_imported</th><th>total_unmet</th></tr></thead><tbody><tr><td>344</td><td>9</td><td>20</td><td>0.1272</td><td>0.2386</td><td>369296.347</td><td>1287.816</td><td>281197.248</td></tr>
+<tr><td>173</td><td>4</td><td>29</td><td>0.338</td><td>0.239</td><td>369296.347</td><td>1434.35</td><td>281050.715</td></tr>
+<tr><td>301</td><td>8</td><td>13</td><td>0.7557</td><td>0.241</td><td>369296.347</td><td>2195.573</td><td>280290.545</td></tr>
+<tr><td>348</td><td>9</td><td>24</td><td>0.9302</td><td>0.2427</td><td>166.719</td><td>1.469</td><td>126.259</td></tr>
+<tr><td>280</td><td>7</td><td>28</td><td>0.2098</td><td>0.248</td><td>97791.067</td><td>833.752</td><td>73536.584</td></tr>
+<tr><td>20</td><td>0</td><td>20</td><td>0.7772</td><td>0.2495</td><td>2955.732</td><td>50.741</td><td>2218.131</td></tr>
+<tr><td>387</td><td>10</td><td>27</td><td>0.109</td><td>0.2508</td><td>97468.051</td><td>96.302</td><td>73018.482</td></tr>
+<tr><td>97</td><td>2</td><td>25</td><td>0.9896</td><td>0.2552</td><td>101282.679</td><td>869.131</td><td>75437.894</td></tr>
+<tr><td>303</td><td>8</td><td>15</td><td>0.8347</td><td>0.2585</td><td>2410850.383</td><td>277.931</td><td>1787552.339</td></tr>
+<tr><td>162</td><td>4</td><td>18</td><td>0.9395</td><td>0.2594</td><td>180680.076</td><td>824.029</td><td>133818.246</td></tr>
+<tr><td>371</td><td>10</td><td>11</td><td>0.9606</td><td>0.2664</td><td>96956.345</td><td>1306.261</td><td>71129.451</td></tr>
+<tr><td>125</td><td>3</td><td>17</td><td>0.028</td><td>0.2676</td><td>92215.508</td><td>834.029</td><td>67539.914</td></tr></tbody></table>
+  <h2>Highest Performing Buildings</h2>
+  <table><thead><tr><th>id</th><th>row</th><th>col</th><th>norm</th><th>service_ratio</th><th>total_demand</th><th>total_imported</th><th>total_unmet</th></tr></thead><tbody><tr><td>551</td><td>15</td><td>11</td><td>0.0259</td><td>0.9963</td><td>514.7</td><td>0.0</td><td>1.889</td></tr>
+<tr><td>592</td><td>16</td><td>16</td><td>0.5231</td><td>0.9963</td><td>514.7</td><td>0.0</td><td>1.889</td></tr>
+<tr><td>658</td><td>18</td><td>10</td><td>0.0344</td><td>0.9963</td><td>514.7</td><td>0.0</td><td>1.889</td></tr>
+<tr><td>95</td><td>2</td><td>23</td><td>0.1999</td><td>0.9946</td><td>289.518</td><td>0.0</td><td>1.572</td></tr>
+<tr><td>123</td><td>3</td><td>15</td><td>0.4338</td><td>0.9946</td><td>289.518</td><td>0.0</td><td>1.572</td></tr>
+<tr><td>129</td><td>3</td><td>21</td><td>0.8342</td><td>0.9946</td><td>289.518</td><td>0.0</td><td>1.572</td></tr>
+<tr><td>159</td><td>4</td><td>15</td><td>0.0731</td><td>0.9946</td><td>289.518</td><td>0.0</td><td>1.572</td></tr>
+<tr><td>160</td><td>4</td><td>16</td><td>0.3028</td><td>0.9946</td><td>289.518</td><td>0.0</td><td>1.572</td></tr>
+<tr><td>222</td><td>6</td><td>6</td><td>0.1575</td><td>0.9946</td><td>289.518</td><td>0.0</td><td>1.572</td></tr>
+<tr><td>231</td><td>6</td><td>15</td><td>0.005</td><td>0.9946</td><td>289.518</td><td>0.0</td><td>1.572</td></tr>
+<tr><td>268</td><td>7</td><td>16</td><td>0.0125</td><td>0.9946</td><td>289.518</td><td>0.0</td><td>1.572</td></tr>
+<tr><td>1190</td><td>33</td><td>2</td><td>0.5049</td><td>0.9946</td><td>289.518</td><td>0.0</td><td>1.572</td></tr></tbody></table>
+</body>
+</html>

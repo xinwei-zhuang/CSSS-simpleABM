@@ -172,6 +172,7 @@ So resilience is the average system health over time.
 - `prepare_agents.py`: helper used to prepare residential-only `agents_initial.json` from the large local SF data.
 - `data/agents_initial.json`: compact prepared agent and solar input.
 - `outputs/report.html`: comparison report for both norm versions.
+- `outputs/animation.html`: animated 36 x 36 grid of building health over time.
 - `outputs/comparison.csv`: scenario-level metrics.
 - `outputs/norm_0/`: outputs for no sharing.
 - `outputs/norm_1/`: outputs for full sharing.

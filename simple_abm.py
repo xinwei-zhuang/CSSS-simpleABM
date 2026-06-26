@@ -70,7 +70,7 @@ def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
         writer.writerows(rows)
 
 
-def run_scenario(input_path: Path, out_dir: Path, norm: float) -> dict[str, object]:
+def run_scenario(input_path: Path, out_dir: Path, norm: float) -> tuple[dict[str, object], list[list[int]]]:
     start = time.perf_counter()
     agents, sun, config = load_input(input_path)
     pv_area_m2 = float(config.get("pv_area_m2", 1.0))
@@ -80,6 +80,7 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> dict[str, obje
     by_cell = {(a.row, a.col): a for a in agents}
     hourly = []
     daily = []
+    frames = []
     day_alive_area = 0.0
 
     for t in range(SIM_HOURS):
@@ -116,6 +117,7 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> dict[str, obje
 
         alive_count = 0
         health_sum = 0.0
+        frame = []
         for a in agents:
             if a.demand[t] > 0:
                 a.health = max(0.0, min(1.0, (a.generation + storage_start[a] + imports[a] - exports[a]) / a.demand[t]))
@@ -123,10 +125,12 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> dict[str, obje
                 a.health = 1.0
             a.health_sum += a.health
             health_sum += a.health
+            frame.append(int(round(a.health * 100)))
             if a.health > 0:
                 alive_count += 1
                 a.alive_hours += 1
 
+        frames.append(frame)
         alive_percent = 100.0 * alive_count / len(agents)
         q_t = health_sum / len(agents)
         resilience_so_far = sum(row["q_t"] for row in hourly + [{"q_t": q_t}]) / (t + 1)
@@ -179,7 +183,7 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> dict[str, obje
         "runtime_seconds": round(time.perf_counter() - start, 3),
     }
     write_outputs(out_dir, agents, hourly, daily, summary)
-    return summary
+    return summary, frames
 
 
 def write_outputs(
@@ -274,7 +278,135 @@ def write_report(path: Path, summaries: list[dict[str, object]], base_out: Path)
     <tbody>{rows}</tbody>
   </table>
   <h2>Files</h2>
-  <ul>{links}</ul>
+  <ul>{links}<li><a href="animation.html">animated health grid</a></li></ul>
+</body>
+</html>
+""",
+        encoding="utf-8",
+    )
+
+
+def write_animation(path: Path, summaries: list[dict[str, object]], frames_by_norm: dict[str, list[list[int]]]) -> None:
+    payload = {
+        "grid": 36,
+        "start": SIM_START.strftime("%Y-%m-%d %H:%M"),
+        "frames_by_norm": frames_by_norm,
+        "summaries": summaries,
+    }
+    path.write_text(
+        f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Simple ABM Health Animation</title>
+  <style>
+    body {{ font-family: Arial, sans-serif; margin: 28px; color: #17202a; background: #f7f8f4; }}
+    main {{ display: grid; grid-template-columns: minmax(360px, 620px) minmax(260px, 1fr); gap: 24px; align-items: start; }}
+    canvas {{ width: 100%; max-width: 620px; aspect-ratio: 1; background: white; border: 1px solid #cfd7c7; }}
+    button, select, input {{ font: inherit; }}
+    button {{ padding: 7px 12px; border: 1px solid #9aa78d; background: white; border-radius: 4px; cursor: pointer; }}
+    .controls {{ display: grid; gap: 12px; }}
+    .row {{ display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }}
+    input[type="range"] {{ width: min(620px, 100%); }}
+    .swatch {{ display: inline-block; width: 14px; height: 14px; vertical-align: -2px; margin-right: 5px; border: 1px solid #888; }}
+    code {{ background: #eef1e8; padding: 2px 4px; border-radius: 4px; }}
+  </style>
+</head>
+<body>
+  <h1>Building Health Animation</h1>
+  <p>Each square is one residential building in the 36 x 36 grid. Color shows <code>health_i(t)</code>: red is 0, green is 1.</p>
+  <main>
+    <section>
+      <canvas id="grid" width="720" height="720"></canvas>
+      <input id="frameSlider" type="range" min="0" max="719" value="0">
+    </section>
+    <section class="controls">
+      <div class="row">
+        <button id="play">Play</button>
+        <button id="pause">Pause</button>
+        <button id="step">Step</button>
+      </div>
+      <label>Scenario
+        <select id="scenario">
+          <option value="norm_0">norm = 0</option>
+          <option value="norm_1">norm = 1</option>
+        </select>
+      </label>
+      <div id="status"></div>
+      <div><span class="swatch" style="background:#8b1e1e"></span>health = 0</div>
+      <div><span class="swatch" style="background:#2f8f58"></span>health = 1</div>
+      <p><code>Q(t) = mean_i health_i(t)</code>. Resilience is the average of Q(t) over the simulation.</p>
+    </section>
+  </main>
+  <script>
+    const DATA = {json.dumps(payload, separators=(",", ":"))};
+    const canvas = document.getElementById("grid");
+    const ctx = canvas.getContext("2d");
+    const slider = document.getElementById("frameSlider");
+    const scenario = document.getElementById("scenario");
+    const statusEl = document.getElementById("status");
+    const grid = DATA.grid;
+    const cell = canvas.width / grid;
+    let timer = null;
+
+    function color(value) {{
+      const h = Math.max(0, Math.min(100, value)) / 100;
+      const r = Math.round(139 * (1 - h) + 47 * h);
+      const g = Math.round(30 * (1 - h) + 143 * h);
+      const b = Math.round(30 * (1 - h) + 88 * h);
+      return `rgb(${{r}},${{g}},${{b}})`;
+    }}
+
+    function frameTime(index) {{
+      const d = new Date("2025-01-01T00:00:00");
+      d.setHours(d.getHours() + index);
+      return d.toISOString().slice(0, 16).replace("T", " ");
+    }}
+
+    function draw() {{
+      const key = scenario.value;
+      const i = Number(slider.value);
+      const frame = DATA.frames_by_norm[key][i];
+      let q = 0;
+      for (let r = 0; r < grid; r++) {{
+        for (let c = 0; c < grid; c++) {{
+          const v = frame[r * grid + c];
+          q += v / 100;
+          ctx.fillStyle = color(v);
+          ctx.fillRect(c * cell, r * cell, cell, cell);
+        }}
+      }}
+      ctx.strokeStyle = "rgba(255,255,255,0.25)";
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= grid; i++) {{
+        ctx.beginPath(); ctx.moveTo(i * cell, 0); ctx.lineTo(i * cell, canvas.height); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, i * cell); ctx.lineTo(canvas.width, i * cell); ctx.stroke();
+      }}
+      q = q / frame.length;
+      const alive = frame.filter(v => v > 0).length / frame.length * 100;
+      statusEl.textContent = `Hour ${{i + 1}} / 720 | ${{frameTime(i)}} | alive ${{alive.toFixed(1)}}% | Q(t) ${{q.toFixed(3)}}`;
+    }}
+
+    function play() {{
+      if (timer) return;
+      timer = setInterval(() => {{
+        slider.value = (Number(slider.value) + 1) % DATA.frames_by_norm[scenario.value].length;
+        draw();
+      }}, 90);
+    }}
+
+    function pause() {{
+      clearInterval(timer);
+      timer = null;
+    }}
+
+    document.getElementById("play").onclick = play;
+    document.getElementById("pause").onclick = pause;
+    document.getElementById("step").onclick = () => {{ slider.value = (Number(slider.value) + 1) % 720; draw(); }};
+    slider.oninput = draw;
+    scenario.onchange = draw;
+    draw();
+  </script>
 </body>
 </html>
 """,
@@ -294,14 +426,18 @@ def main() -> None:
     requested_norm = args.norm if args.norm is not None else args.generosity
     scenarios = [requested_norm] if requested_norm is not None else [0.0, 1.0]
     summaries = []
+    frames_by_norm = {}
 
     for norm in scenarios:
         scenario_dir = outputs / f"norm_{int(norm)}"
-        summaries.append(run_scenario(input_path, scenario_dir, norm))
+        summary, frames = run_scenario(input_path, scenario_dir, norm)
+        summaries.append(summary)
+        frames_by_norm[f"norm_{int(norm)}"] = frames
 
     if len(summaries) == 2:
         write_csv(outputs / "comparison.csv", summaries)
         write_report(outputs / "report.html", summaries, outputs)
+        write_animation(outputs / "animation.html", summaries, frames_by_norm)
 
     for summary in summaries:
         print(

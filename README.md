@@ -19,6 +19,21 @@ python simple_abm.py --norm 0
 python simple_abm.py --norm 1
 ```
 
+## Parameters You Can Tune
+
+| Parameter | Default | What it does | Set in |
+| --- | --- | --- | --- |
+| `pv_generation_scale` | `5.0` | PV scaling factor: multiplies every building's solar generation. Higher = more energy. | `prepare_agents.py` |
+| `battery_capacity_kwh` | `5.0` | Battery scaling: max energy each building can store. | `prepare_agents.py` |
+| `pv_area_m2` | `1.0` | PV panel area per building (same for all). | `prepare_agents.py` |
+| `norm` | `0` and `1` | Sharing switch: `0` = share nothing, `1` = share all spare energy. | `--norm` flag |
+| `grid` | `36` | Grid is `grid x grid` cells, one building each. | `prepare_agents.py` |
+| `dead_hours_until_permanent` | `24` | Consecutive dead hours before a building is permanently dead. | `simple_abm.py` |
+| `no_sun_day` | `15` | Day with zero solar (the disturbance). | `prepare_agents.py` |
+
+`pv_generation_scale`, `battery_capacity_kwh`, and `pv_area_m2` are written into
+`data/agents_initial.json`; rerun `prepare_agents.py` after changing them.
+
 ## Simulation Time
 
 The simulation covers exactly 30 days:
@@ -130,24 +145,18 @@ Each hour has two steps:
 
 1. **Self-use.** Every building uses its own generation plus stored energy to
    meet its demand. Whatever is left over is its `surplus`; whatever is missing
-   is its `deficit`.
-2. **Share (one simultaneous step).** Every building with a surplus gives at
-   once, with no ordering between buildings. A donor gives `norm * surplus`,
-   but never more than its short neighbors collectively need this hour, and
-   splits that gift between those neighbors in proportion to how much each one
-   lacks.
+   means it is `short`.
+2. **Share (one simultaneous step).** Every building with a surplus splits
+   `norm * surplus` equally among the neighbors that are short this hour. All
+   buildings do this at once, so there is no ordering and no asking one neighbor
+   at a time.
 
-So sharing is **donor-driven and simultaneous**: a building does not ask its
-neighbors one at a time, and there is no first-come-first-served ordering. Every
-donor looks at which of its four neighbors are short this hour and divides its
-spare energy among them in a single step.
-
-`gift(donor -> neighbor) = min(surplus, total_neighbor_need) * norm_donor * (neighbor_deficit / total_neighbor_need)`
+`gift to each short neighbor = norm * surplus / (number of short neighbors)`
 
 Two versions are run:
 
 - `norm = 0`: a building shares nothing.
-- `norm = 1`: a building shares all of its spare energy (up to what neighbors need).
+- `norm = 1`: a building shares all of its spare energy.
 
 ## Healthy / Alive Rule
 
@@ -159,7 +168,6 @@ Building states:
 
 - `alive`: `health_i(t) > 0`
 - `dead` (this hour): `health_i(t) = 0`
-- `critical`: `0 < health_i(t) < 0.05` (health below 5%)
 
 ### Permanent Death
 
@@ -170,20 +178,13 @@ consecutive-dead-hour counter resets to `0` on any hour the building is alive.
 
 ## Building Performance Metrics
 
+Only two metrics are reported.
+
 1. `% building alive`
 
 The percent of buildings with `health_i(t) > 0` over the evaluated time window.
 
-2. `% critical`
-
-The percent of buildings with `0 < health_i(t) < 0.05`.
-
-3. `% permanently dead`
-
-The percent of buildings that have been permanently dead (dead for 24
-consecutive hours) by the end of the window.
-
-4. `resilience`
+2. `resilience`
 
 Resilience is normalized to `[0, 1]` as the area under the system performance curve:
 
@@ -198,20 +199,25 @@ So resilience is the average system health over time.
 
 ## Does Sharing Help? Parameter Sweep
 
-Sharing (`norm = 1`) only beats no-sharing (`norm = 0`) when energy is
-**abundant**: high `pv_generation_scale` **and** large `battery_capacity_kwh`.
-In the default scarce setting (`pv_generation_scale = 5`, `battery = 5`) sharing
-is worse. Because generation is spatially uniform, sharing cannot add energy to
-the system; it only moves it, and it drains donors' batteries before the no-sun
-stress, so more buildings die permanently. Sharing wins only when buildings have
-so much spare solar and storage that the shared energy would otherwise be lost.
+With this simple sharing rule, sharing (`norm = 1`) **never** beats no-sharing
+(`norm = 0`) across the tested `pv_generation_scale` x `battery_capacity_kwh`
+grid: it is worse at every setting. Generation is spatially uniform, so sharing
+cannot add energy to the system; and because a donor splits *all* its spare
+energy among its short neighbors (often more than they need), it wastes the
+excess and drains its own battery before the no-sun stress, so more buildings
+die permanently. The gap shrinks as energy gets more abundant but stays negative.
+
+A less wasteful rule (cap each gift at the neighbor's actual shortfall) can let
+sharing win in the abundant regime, but that is more complex; this version keeps
+the rule as simple as possible.
 
 See `outputs/sweep_collage.png`, `outputs/sweep_delta_heatmap.png`, and
 `outputs/sweep_results.csv`.
 
 ## Files
 
-- `simple_abm.py`: model runner.
+- `simple_abm.py`: the core model only (agents, the hourly loop, sharing, health, metrics). Short on purpose.
+- `reports.py`: all output writers (CSV metrics and the HTML report / animation / hover-grid pages). Imported by `simple_abm.py`.
 - `prepare_agents.py`: helper used to prepare residential-only `agents_initial.json` from the large local SF data.
 - `data/agents_initial.json`: compact prepared agent and solar input. Each agent includes `id`, `row`, `col`, `building_type`, initial `norm`, `profile_id`, and the full 720-hour `demand` load profile.
 - `data/agents_initial_summary.csv`: per-agent initial summary with `profile_id`, PV size, PV scale, battery size, and demand min/mean/max.
@@ -224,7 +230,7 @@ See `outputs/sweep_collage.png`, `outputs/sweep_delta_heatmap.png`, and
 - `outputs/sweep_delta_heatmap.png`: `resilience(share) - resilience(no-share)` across the full grid; blue = sharing wins, red = sharing loses.
 - `outputs/norm_0/`: outputs for no sharing.
 - `outputs/norm_1/`: outputs for full sharing.
-- `outputs/norm_*/agents_final.csv`: per-building `alive_percent`, `critical_percent`, `permanently_dead`, and `resilience`.
-- `outputs/norm_*/daily_metrics.csv`: daily `alive_percent`, `critical_percent`, `permadead_percent`, and `resilience`.
-- `outputs/norm_*/hourly_metrics.csv`: hourly `alive_percent`, `critical_percent`, `permadead_percent`, `q_t`, and running `resilience`.
+- `outputs/norm_*/agents_final.csv`: per-building `alive_percent` and `resilience`.
+- `outputs/norm_*/daily_metrics.csv`: daily `alive_percent` and `resilience`.
+- `outputs/norm_*/hourly_metrics.csv`: hourly `alive_percent` and running `resilience`.
 - `outputs/norm_*/model_data.json`: simple continuation data structure.

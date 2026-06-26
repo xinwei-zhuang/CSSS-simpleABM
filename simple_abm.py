@@ -73,6 +73,8 @@ def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
 def run_scenario(input_path: Path, out_dir: Path, norm: float) -> dict[str, object]:
     start = time.perf_counter()
     agents, sun, config = load_input(input_path)
+    pv_area_m2 = float(config.get("pv_area_m2", 1.0))
+    battery_capacity_kwh = float(config.get("battery_capacity_kwh", 5.0))
     for a in agents:
         a.norm = norm
     by_cell = {(a.row, a.col): a for a in agents}
@@ -88,7 +90,7 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> dict[str, obje
 
         for a in agents:
             d = a.demand[t]
-            g = sun[t] * max(a.demand)
+            g = sun[t] * pv_area_m2
             storage_start[a] = a.storage
             a.generation = g
             available = a.storage + g
@@ -110,7 +112,7 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> dict[str, obje
                     break
 
         for donor, left in surplus.items():
-            donor.storage = left
+            donor.storage = min(left, battery_capacity_kwh)
 
         alive_count = 0
         health_sum = 0.0
@@ -159,8 +161,11 @@ def run_scenario(input_path: Path, out_dir: Path, norm: float) -> dict[str, obje
         "building_type_filter": config.get("building_type_filter", "residential"),
         "load_profile_source": config.get("load_profile_source", "data/agents_initial.json"),
         "solar_source": config.get("solar_source", "data/agents_initial.json"),
-        "solar_generation_rule": config.get("solar_generation_rule", "generation_i(t) = normalized_solar(t) * max(demand_i)"),
-        "storage_rule": config.get("storage_rule", "storage_i(t) is carried-over unused surplus energy; no battery capacity parameter is used."),
+        "solar_source_variable": config.get("solar_source_variable", "ALLSKY_SFC_SW_DWN"),
+        "pv_area_m2": pv_area_m2,
+        "battery_capacity_kwh": battery_capacity_kwh,
+        "solar_generation_rule": config.get("solar_generation_rule", "generation_i(t) = solar_kwh_per_m2(t) * pv_area_m2"),
+        "storage_rule": config.get("storage_rule", "storage_i(t) is capped at battery_capacity_kwh."),
         "agents": len(agents),
         "grid": f'{config["grid"]}x{config["grid"]}',
         "simulation_start": SIM_START.strftime("%Y-%m-%d %H:%M"),
@@ -259,8 +264,8 @@ def write_report(path: Path, summaries: list[dict[str, object]], base_out: Path)
   <p>Simulation time is explicitly <strong>2025-01-01 00:00 through 2025-01-30 23:00</strong>, with no-sun disturbance on <strong>2025-01-15</strong>.</p>
   <p>Agent state: <code>A_i(t) = {{building_type, norm, generation_i(t), demand_i(t), storage_i(t), health_i(t)}}</code>. This version uses only residential buildings.</p>
   <p>Load profile source: local SF residential rows from <code>energy_profiles_hourly_used.csv</code>, joined to residential buildings in <code>building_energy_metadata.csv</code> by <code>profile_id</code>. The GitHub repo stores the compact prepared version in <code>data/agents_initial.json</code>.</p>
-  <p>Solar generation potential source: cached NASA POWER 2025 hourly <code>ALLSKY_SFC_SW_DWN</code> for San Francisco, normalized to [0, 1]. Generation uses <code>generation_i(t) = normalized_solar(t) * max(demand_i)</code>.</p>
-  <p>Battery/storage size source: no external battery-size data is used. <code>storage_i(t)</code> is only carried-over unused surplus energy from the previous hour; the minimal model has no battery capacity parameter.</p>
+  <p>Solar generation potential source: cached NASA POWER 2025 hourly <code>ALLSKY_SFC_SW_DWN</code> for San Francisco. Each hourly value is converted from W/m2 to kWh/m2 by dividing by 1000. Generation uses the same fixed PV area for every grid cell: <code>generation_i(t) = solar_kwh_per_m2(t) * 1.0 m2</code>.</p>
+  <p>Battery/storage size is fixed for every building: <code>battery_capacity_i = 5.0 kWh</code>. <code>storage_i(t)</code> carries unused surplus energy forward and is capped at 5.0 kWh.</p>
   <p>Building health is continuous: <code>health_i(t) = clip((generation + starting_storage + energy_received - energy_exported) / demand, 0, 1)</code>. A building is dead only when <code>health_i(t) = 0</code>.</p>
   <p>Energy sharing rule: <code>gift = min(surplus, energy_request) * norm_donor</code>. The two scenarios set every residential building's <code>norm_i</code> to 0 or 1.</p>
   <p>Only two performance metrics are reported: <strong>% building alive</strong> and <strong>resilience</strong>. Here <code>Q(t)</code> is system performance, defined as the average building health: <code>Q(t) = mean_i health_i(t)</code>. Resilience is normalized area under that curve: <code>R = integral Q(t) dt / integral Q0 dt</code>, where <code>Q0 = 1</code>.</p>

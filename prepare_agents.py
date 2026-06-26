@@ -10,6 +10,8 @@ from pathlib import Path
 GRID = 36
 HOURS = 24 * 30
 NO_SUN_DAY = 15
+PV_AREA_M2 = 1.0
+BATTERY_CAPACITY_KWH = 5.0
 SF_BBOX = {"west": -122.515, "east": -122.355, "south": 37.705, "north": 37.812}
 
 
@@ -52,8 +54,7 @@ def load_sun(path: Path) -> list[float]:
     data = json.loads(path.read_text(encoding="utf-8"))
     solar = data["properties"]["parameter"]["ALLSKY_SFC_SW_DWN"]
     values = [solar[k] for k in sorted(solar)[:HOURS]]
-    hi = max(values) or 1.0
-    return [0.0 if i // 24 == NO_SUN_DAY - 1 else values[i] / hi for i in range(HOURS)]
+    return [0.0 if i // 24 == NO_SUN_DAY - 1 else values[i] / 1000.0 for i in range(HOURS)]
 
 
 def main() -> None:
@@ -99,8 +100,12 @@ def main() -> None:
         "load_profile_source": str(profiles_path),
         "building_metadata_source": str(metadata_path),
         "solar_source": str(solar_path),
-        "solar_generation_rule": "generation_i(t) = normalized_solar(t) * max(demand_i)",
-        "storage_rule": "storage_i(t) is carried-over unused surplus energy; no external battery-size data or capacity parameter is used.",
+        "solar_source_variable": "ALLSKY_SFC_SW_DWN",
+        "solar_units": "kWh per m2 per hour, computed as W/m2 divided by 1000 for each hourly step",
+        "pv_area_m2": PV_AREA_M2,
+        "battery_capacity_kwh": BATTERY_CAPACITY_KWH,
+        "solar_generation_rule": "generation_i(t) = solar_kwh_per_m2(t) * pv_area_m2; pv_area_m2 is fixed to 1.0 for every building.",
+        "storage_rule": "storage_i(t) is capped at battery_capacity_kwh; battery_capacity_kwh is fixed to 5.0 for every building.",
         "raw_residential_building_rows": residential_rows,
         "unique_residential_profiles": len(profiles),
         "sun": load_sun(solar_path),

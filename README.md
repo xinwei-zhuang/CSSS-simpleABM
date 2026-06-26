@@ -89,29 +89,35 @@ The source variable is:
 `ALLSKY_SFC_SW_DWN`
 
 This is hourly all-sky surface shortwave downward irradiance for San Francisco.
-The model normalizes the first 720 hourly values to `[0, 1]`, then sets
-`2025-01-15` to zero sun.
+The model uses the first 720 hourly values, converts each value from `W/m2` to
+`kWh/m2` by dividing by `1000`, then sets `2025-01-15` to zero sun.
 
 The simple generation rule is:
 
-`generation_i(t) = normalized_solar(t) * max(demand_i)`
+`generation_i(t) = solar_kwh_per_m2(t) * pv_area_m2`
 
-So there is no separate PV-size parameter in this minimal version. Each
-residential building's solar generation potential is scaled by its own peak
-hourly demand.
+The PV size is fixed and uniform across all grid cells:
+
+`pv_area_m2 = 1.0`
+
+Because every grid cell has the same assumed PV area, solar generation potential
+is spatially uniform in this minimal version.
 
 ### Battery / Storage Size
 
-There is no external battery storage size data in this minimal ABM.
+Battery size is fixed and uniform across all residential buildings:
 
-`storage_i(t)` is a state variable, not an input parameter. It starts at `0` and
-is updated from unused surplus energy:
+`battery_capacity_kwh = 5.0`
+
+`storage_i(t)` starts at `0` and is updated from unused surplus energy:
 
 `storage_i(t+1) = unused surplus after self-use and sharing`
 
-The current minimal model does **not** use a battery capacity limit. In other
-words, there is no battery-size parameter and no battery-size data source yet.
-This keeps `norm` as the only sharing behavior variable.
+Storage is capped:
+
+`storage_i(t) <= 5.0 kWh`
+
+So all buildings use the same modular battery size and the same modular PV size.
 
 ## Energy Sharing Rule
 

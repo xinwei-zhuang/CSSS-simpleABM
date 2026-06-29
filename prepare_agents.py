@@ -1,3 +1,17 @@
+"""Generate the prepared agent input for the simple ABM.
+
+Both load and solar are abstract: a base curve (an archetype) plus an hourly
+Gaussian perturbation. No real-world data files are read, so the repo is fully
+self-contained and reproducible from a seed. The two archetypes were abstracted
+from the original SF data (their average shape over the 30 days), so they stay
+realistic without depending on it.
+
+    demand_i(t) = max(0, level + noise),  level = demand_archetype[hour] * building_scale
+                  noise ~ Normal(0, DEMAND_NOISE_FRACTION * level)
+                  building_scale ~ Normal(1.0, HETERO_SCALE_STD), floored at 0.3
+    sun(t)      = max(0, base + noise),   base = solar_archetype[hour]
+                  noise ~ Normal(0, SOLAR_NOISE_FRACTION * base)   (zero on the no-sun day)
+"""
 from __future__ import annotations
 
 import argparse
@@ -13,73 +27,58 @@ NO_SUN_DAY = 15
 PV_AREA_M2 = 1.0
 PV_GENERATION_SCALE = 5.0
 BATTERY_CAPACITY_KWH = 5.0
-SF_BBOX = {"west": -122.515, "east": -122.355, "south": 37.705, "north": 37.812}
+
+# Mean residential daily load shape, kWh per hour (midnight .. 23:00), abstracted
+# from the original SF residential data (its hour-of-day average).
+DEMAND_ARCHETYPE_KWH = [
+    1.049, 1.067, 1.016, 0.862, 0.828, 0.855, 0.859, 0.887,
+    1.006, 1.129, 1.161, 1.147, 1.133, 1.069, 0.877, 0.875,
+    0.800, 0.750, 0.715, 0.777, 0.906, 0.969, 1.058, 1.092,
+]
+# Mean daily solar shape, kWh per m2 per hour, abstracted from the cached NASA
+# POWER irradiance for SF (its hour-of-day average): a midday bell curve.
+SOLAR_ARCHETYPE_KWH_M2 = [
+    0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.012,
+    0.124, 0.269, 0.388, 0.461, 0.473, 0.436, 0.348, 0.221,
+    0.078, 0.001, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000,
+]
+HETERO_SCALE_STD = 0.25      # building-to-building spread of the load level
+DEMAND_NOISE_FRACTION = 0.15  # hourly load noise band, fraction of the load level
+SOLAR_NOISE_FRACTION = 0.10   # hourly solar noise band, fraction of the base value
 
 
-def cell(lon: float, lat: float) -> tuple[int, int]:
-    col = int((lon - SF_BBOX["west"]) / (SF_BBOX["east"] - SF_BBOX["west"]) * GRID)
-    row = int((SF_BBOX["north"] - lat) / (SF_BBOX["north"] - SF_BBOX["south"]) * GRID)
-    return max(0, min(GRID - 1, row)), max(0, min(GRID - 1, col))
+def make_demand(rng: random.Random, scale: float) -> list[float]:
+    demand = []
+    for t in range(HOURS):
+        level = DEMAND_ARCHETYPE_KWH[t % 24] * scale
+        value = level + rng.gauss(0.0, DEMAND_NOISE_FRACTION * level)
+        demand.append(round(max(0.0, value), 4))
+    return demand
 
 
-def load_residential_profiles(path: Path) -> dict[str, list[float]]:
-    profiles = {}
-    with path.open(newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        cols = [c for c in reader.fieldnames or [] if c.startswith("t")][:HOURS]
-        for row in reader:
-            if row["profile_type"].lower() != "residential":
-                continue
-            profiles[row["profile_id"]] = [max(0.0, float(row[c] or 0.0)) for c in cols]
-    return profiles
-
-
-def load_residential_bins(metadata_path: Path, profiles: dict[str, list[float]]) -> tuple[list[list[list[str]]], list[str], int]:
-    bins: list[list[list[str]]] = [[[] for _ in range(GRID)] for _ in range(GRID)]
-    all_ids = []
-    residential_rows = 0
-    with metadata_path.open(newline="", encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            if row["profile_type"].lower() != "residential":
-                continue
-            residential_rows += 1
-            lon, lat, pid = float(row["centroid_lon"]), float(row["centroid_lat"]), row["profile_id"]
-            if pid in profiles and SF_BBOX["west"] <= lon <= SF_BBOX["east"] and SF_BBOX["south"] <= lat <= SF_BBOX["north"]:
-                r, c = cell(lon, lat)
-                bins[r][c].append(pid)
-                all_ids.append(pid)
-    return bins, all_ids, residential_rows
-
-
-def load_sun(path: Path) -> list[float]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    solar = data["properties"]["parameter"]["ALLSKY_SFC_SW_DWN"]
-    values = [solar[k] for k in sorted(solar)[:HOURS]]
-    return [0.0 if i // 24 == NO_SUN_DAY - 1 else values[i] / 1000.0 for i in range(HOURS)]
+def make_sun(rng: random.Random) -> list[float]:
+    sun = []
+    for t in range(HOURS):
+        base = SOLAR_ARCHETYPE_KWH_M2[t % 24]
+        if (t // 24) + 1 == NO_SUN_DAY or base <= 0.0:
+            sun.append(0.0)
+        else:
+            sun.append(round(max(0.0, base + rng.gauss(0.0, SOLAR_NOISE_FRACTION * base)), 6))
+    return sun
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--raw-data-dir", type=Path, default=Path(r"D:\CSSS2026\cities in petri dish\data"))
     parser.add_argument("--out", type=Path, default=Path(__file__).resolve().parent / "data" / "agents_initial.json")
     parser.add_argument("--seed", type=int, default=7)
     args = parser.parse_args()
 
-    energy_dir = args.raw_data_dir / "energy_profiles_clean"
-    profiles_path = energy_dir / "energy_profiles_hourly_used.csv"
-    metadata_path = energy_dir / "building_energy_metadata.csv"
-    solar_path = args.raw_data_dir / "sf_terrain_energy_growth_cache" / "nasa_power_sf_2025_hourly.json"
-
     rng = random.Random(args.seed)
-    profiles = load_residential_profiles(profiles_path)
-    bins, all_ids, residential_rows = load_residential_bins(metadata_path, profiles)
-    if not profiles or not all_ids:
-        raise RuntimeError("No residential profiles/buildings found in the raw SF data.")
-
+    sun = make_sun(rng)
     agents = []
     for row in range(GRID):
         for col in range(GRID):
-            profile_id = rng.choice(bins[row][col] or all_ids)
+            scale = max(0.3, rng.gauss(1.0, HETERO_SCALE_STD))
             agents.append(
                 {
                     "id": len(agents),
@@ -87,8 +86,9 @@ def main() -> None:
                     "col": col,
                     "building_type": "residential",
                     "norm": 0.0,
-                    "profile_id": profile_id,
-                    "demand": profiles[profile_id],
+                    "profile_id": f"res-{scale:.2f}",
+                    "load_scale": round(scale, 4),
+                    "demand": make_demand(rng, scale),
                 }
             )
 
@@ -97,16 +97,18 @@ def main() -> None:
         "hours": HOURS,
         "no_sun_day": NO_SUN_DAY,
         "building_type_filter": "residential",
-        "load_profile_source": str(profiles_path),
-        "building_metadata_source": str(metadata_path),
-        "solar_source": str(solar_path),
-        "solar_source_variable": "ALLSKY_SFC_SW_DWN",
+        "load_profile_source": "synthetic residential archetype + Gaussian noise (prepare_agents.py)",
+        "solar_source": "synthetic solar archetype + Gaussian noise (prepare_agents.py)",
+        "load_archetype_kwh": DEMAND_ARCHETYPE_KWH,
+        "solar_archetype_kwh_m2": SOLAR_ARCHETYPE_KWH_M2,
+        "hetero_scale_std": HETERO_SCALE_STD,
+        "demand_noise_fraction": DEMAND_NOISE_FRACTION,
+        "solar_noise_fraction": SOLAR_NOISE_FRACTION,
         "pv_area_m2": PV_AREA_M2,
         "pv_generation_scale": PV_GENERATION_SCALE,
         "battery_capacity_kwh": BATTERY_CAPACITY_KWH,
-        "raw_residential_building_rows": residential_rows,
-        "unique_residential_profiles": len(profiles),
-        "sun": load_sun(solar_path),
+        "seed": args.seed,
+        "sun": sun,
         "agents": agents,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -116,19 +118,9 @@ def main() -> None:
         writer = csv.DictWriter(
             f,
             fieldnames=[
-                "id",
-                "row",
-                "col",
-                "building_type",
-                "norm",
-                "profile_id",
-                "pv_area_m2",
-                "pv_generation_scale",
-                "battery_capacity_kwh",
-                "load_profile_hours",
-                "demand_min",
-                "demand_mean",
-                "demand_max",
+                "id", "row", "col", "building_type", "norm", "profile_id",
+                "load_scale", "pv_area_m2", "pv_generation_scale", "battery_capacity_kwh",
+                "load_profile_hours", "demand_min", "demand_mean", "demand_max",
             ],
         )
         writer.writeheader()
@@ -142,6 +134,7 @@ def main() -> None:
                     "building_type": agent["building_type"],
                     "norm": agent["norm"],
                     "profile_id": agent["profile_id"],
+                    "load_scale": agent["load_scale"],
                     "pv_area_m2": PV_AREA_M2,
                     "pv_generation_scale": PV_GENERATION_SCALE,
                     "battery_capacity_kwh": BATTERY_CAPACITY_KWH,
